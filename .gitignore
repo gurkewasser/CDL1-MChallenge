@@ -1,5 +1,6 @@
 data/raw
 .DS_Store
+data/unpacked
 
 
 # Byte-compiled / optimized / DLL files
