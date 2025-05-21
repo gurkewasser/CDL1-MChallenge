@@ -3,10 +3,19 @@ import pandas as pd
 from tqdm import tqdm
 import rootutils
 import hashlib
+import os
+from pathlib import Path
 
-# Setup project root
-root = rootutils.setup_root(__file__, pythonpath=True, cwd=True)
+# Setup project root in a platform-independent way
+try:
+    # Try to use rootutils if available and configured
+    root = rootutils.setup_root(__file__, pythonpath=True, cwd=True)
+    root = Path(root)
+except Exception:
+    # Fallback: use the directory two levels up from this file (src/prepare_raw_data.py)
+    root = Path(__file__).resolve().parent.parent
 
+# Ensure all paths are pathlib.Path objects and platform-independent
 INPUT_DIR = root / "data" / "raw"
 UNPACK_DIR = root / "data" / "unpacked"
 OUTPUT_DIR = root / "data" / "processed"
