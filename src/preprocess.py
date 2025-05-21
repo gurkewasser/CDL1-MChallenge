@@ -6,35 +6,6 @@ from scipy.signal import butter, filtfilt
 import sys
 from tqdm import tqdm
 
-def load_and_concatenate(raw_dir: Path, pattern: str = "*.parquet") -> pd.DataFrame:
-    """
-    Loads all raw data (Parquet) from a directory or a single file and returns a DataFrame.
-    """
-    if raw_dir.is_file():
-        # If a file is provided, just read it directly
-        try:
-            df = pd.read_parquet(raw_dir)
-            return df
-        except Exception as e:
-            print(f"Error reading parquet file {raw_dir}: {e}", file=sys.stderr)
-            raise
-    elif raw_dir.is_dir():
-        files = list(raw_dir.glob(pattern))
-        if not files:
-            raise ValueError(f"No files matching pattern '{pattern}' found in directory {raw_dir}")
-        dfs = []
-        for f in tqdm(files, desc="Loading parquet files"):
-            try:
-                dfs.append(pd.read_parquet(f))
-            except Exception as e:
-                print(f"Error reading parquet file {f}: {e}", file=sys.stderr)
-                continue
-        if not dfs:
-            raise ValueError(f"No readable parquet files found in directory {raw_dir}")
-        return pd.concat(dfs, ignore_index=True)
-    else:
-        raise ValueError(f"{raw_dir} is neither a file nor a directory.")
-
 def preprocess_dataframe(df: pd.DataFrame,
                          time_col: str = 'time',
                          drop_initial: float = 8.0,
@@ -140,98 +111,140 @@ def extract_features(segments: list[pd.DataFrame]) -> pd.DataFrame:
         raise ValueError("No features extracted: segments list is empty.")
     return pd.DataFrame(rows).set_index('segment_id')
 
+def get_label_per_segment(raw_df, segments, time_col='time', label_col='activity'):
+    """
+    For each segment, get the most frequent label in the corresponding time window.
+    """
+    if label_col not in raw_df.columns:
+        raise ValueError(f"No '{label_col}' column in raw data for labels")
+    label_series = raw_df.set_index(pd.to_datetime(raw_df[time_col], unit='ns'))[label_col]
+    labels = []
+    for seg in segments:
+        seg_label = label_series[seg.index.min():seg.index.max()]
+        labels.append(seg_label.mode()[0] if not seg_label.empty else None)
+    return labels
+
+def get_files_list(raw_dir: Path, pattern: str = "*.parquet"):
+    if raw_dir.is_file():
+        return [raw_dir]
+    elif raw_dir.is_dir():
+        files = list(raw_dir.glob(pattern))
+        if not files:
+            raise ValueError(f"No files matching pattern '{pattern}' found in directory {raw_dir}")
+        return files
+    else:
+        raise ValueError(f"{raw_dir} is neither a file nor a directory.")
+
 def main(args):
-    pbar_total = 8
-    pbar = tqdm(total=pbar_total, desc="Preprocessing pipeline", ncols=100)
-    try:
-        raw = load_and_concatenate(Path(args.raw_dir))
-        pbar.set_description("Loading raw data")
-        pbar.update(1)
-    except Exception as e:
-        print(f"Failed to load data: {e}", file=sys.stderr)
-        pbar.close()
-        sys.exit(1)
-    try:
-        proc = preprocess_dataframe(raw,
-                                    drop_initial=args.drop_initial,
-                                    drop_final=args.drop_final,
-                                    sampling_rate=args.sampling_rate)
-        pbar.set_description("Preprocessing dataframe")
-        pbar.update(1)
-    except Exception as e:
-        print(f"Preprocessing failed: {e}", file=sys.stderr)
-        pbar.close()
-        sys.exit(1)
-
-    # Filter and smooth full signal at once
-    try:
-        pbar.set_description("Filtering full signal")
-        proc_filt = butterworth_filter(proc,
-                                        order=args.butter_order,
-                                        cutoff_hz=args.butter_cutoff,
-                                        sampling_rate=args.sampling_rate)
-        pbar.update(1)
-    except Exception as e:
-        print(f"Filtering full signal failed: {e}", file=sys.stderr)
-        pbar.close()
-        sys.exit(1)
-    try:
-        pbar.set_description("Smoothing full signal")
-        proc_smooth = moving_average(proc_filt,
-                                     window_sec=args.ma_window,
-                                     sampling_rate=args.sampling_rate)
-        pbar.update(1)
-    except Exception as e:
-        print(f"Smoothing full signal failed: {e}", file=sys.stderr)
-        pbar.close()
-        sys.exit(1)
-    # Segment the smoothed signal
-    try:
-        segments = segment_dataframe(proc_smooth,
-                                     segment_length=args.segment_length,
-                                     overlap=args.overlap)
-        pbar.set_description("Segmenting dataframe")
-        pbar.update(1)
-    except Exception as e:
-        print(f"Segmentation failed: {e}", file=sys.stderr)
-        pbar.close()
-        sys.exit(1)
-    # Extract features for non-DL models
-    try:
-        features_df = extract_features(segments)
-        pbar.set_description("Extracting features")
-        pbar.update(1)
-    except Exception as e:
-        print(f"Feature extraction failed: {e}", file=sys.stderr)
-        pbar.close()
-        sys.exit(1)
-    # Build raw sequences for DL models
-    try:
-        raw_seqs = []
-        for i, seg in enumerate(segments):
-            row = {'segment_id': i}
-            for col in seg.columns:
-                row[col] = seg[col].tolist()
-            raw_seqs.append(row)
-        sequences_df = pd.DataFrame(raw_seqs).set_index('segment_id')
-        pbar.set_description("Building sequences")
-        pbar.update(1)
-    except Exception as e:
-        print(f"Sequence building failed: {e}", file=sys.stderr)
-        pbar.close()
-        sys.exit(1)
-
+    raw_dir = Path(args.raw_dir)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    features_df.to_parquet(out / 'features.parquet')
-    sequences_df.to_parquet(out / 'sequences.parquet')
-    pbar.set_description("Saving outputs")
-    pbar.update(1)
-    pbar.close()
-    print(f"Saved {len(features_df)} segments: features & sequences to {out}")
+
+    files = get_files_list(raw_dir)
+    all_features = []
+    all_labels = []
+    all_sequences = []
+    channel_names = None
+    seq_len = int(args.segment_length * args.sampling_rate)
+    total_segments = 0
+
+    pbar = tqdm(files, desc="Processing files", ncols=100)
+    for file_idx, file in enumerate(pbar):
+        pbar.set_description(f"Processing {file.name}")
+        try:
+            raw = pd.read_parquet(file)
+        except Exception as e:
+            print(f"Error reading parquet file {file}: {e}", file=sys.stderr)
+            continue
+
+        try:
+            proc = preprocess_dataframe(raw,
+                                       drop_initial=args.drop_initial,
+                                       drop_final=args.drop_final,
+                                       sampling_rate=args.sampling_rate)
+        except Exception as e:
+            print(f"Preprocessing failed for {file}: {e}", file=sys.stderr)
+            continue
+
+        try:
+            proc_filt = butterworth_filter(proc,
+                                           order=args.butter_order,
+                                           cutoff_hz=args.butter_cutoff,
+                                           sampling_rate=args.sampling_rate)
+        except Exception as e:
+            print(f"Filtering failed for {file}: {e}", file=sys.stderr)
+            continue
+
+        try:
+            proc_smooth = moving_average(proc_filt,
+                                         window_sec=args.ma_window,
+                                         sampling_rate=args.sampling_rate)
+        except Exception as e:
+            print(f"Smoothing failed for {file}: {e}", file=sys.stderr)
+            continue
+
+        try:
+            segments = segment_dataframe(proc_smooth,
+                                         segment_length=args.segment_length,
+                                         overlap=args.overlap)
+        except Exception as e:
+            print(f"Segmentation failed for {file}: {e}", file=sys.stderr)
+            continue
+
+        if not segments:
+            continue
+
+        try:
+            features_df = extract_features(segments)
+        except Exception as e:
+            print(f"Feature extraction failed for {file}: {e}", file=sys.stderr)
+            continue
+
+        # Get labels for each segment
+        try:
+            labels = get_label_per_segment(raw, segments, time_col='time', label_col='activity')
+        except Exception as e:
+            print(f"Label extraction failed for {file}: {e}", file=sys.stderr)
+            labels = [None] * len(segments)
+
+        features_df['label'] = labels
+        features_df['file'] = file.name
+        features_df['segment_global_id'] = np.arange(total_segments, total_segments + len(segments))
+        features_df = features_df.set_index('segment_global_id')
+        all_features.append(features_df)
+        all_labels.extend(labels)
+
+        # For DL: build sequences
+        if channel_names is None:
+            channel_names = segments[0].columns.tolist()
+        for seg in segments:
+            # Pad or trim to seq_len
+            arr = np.zeros((seq_len, len(channel_names)), dtype=np.float32)
+            seg_arr = np.vstack([seg[ch].values for ch in channel_names]).T
+            if seg_arr.shape[0] >= seq_len:
+                arr[:] = seg_arr[:seq_len]
+            else:
+                arr[:seg_arr.shape[0]] = seg_arr
+            all_sequences.append(arr)
+        total_segments += len(segments)
+
+    # After all files: concatenate and save
+    if not all_features or not all_sequences:
+        print("No valid segments found in any file.", file=sys.stderr)
+        sys.exit(1)
+
+    features_all_df = pd.concat(all_features, axis=0)
+    features_all_df.reset_index(drop=True, inplace=True)
+    features_all_df.to_csv(out / 'features_non_dl.csv', index=False)
+
+    X = np.stack(all_sequences, axis=0)
+    y = np.array(all_labels)
+    np.savez_compressed(out / 'dl_data.npz', X=X, y=y)
+
+    print(f"Saved {len(all_sequences)} segments: features for non-DL (CSV) and sequences for DL (NPZ) to {out}")
 
 if __name__ == '__main__':
-    p = argparse.ArgumentParser(description='Preprocessing Pipeline nach Notebook-Schritten')
+    p = argparse.ArgumentParser(description='Preprocessing Pipeline für Einzeldateien (Speicherschonend)')
     p.add_argument('--raw_dir', type=str, required=True, help='Ordner mit Roh-Parquet-Dateien oder Einzeldatei')
     p.add_argument('--output_dir', type=str, required=True, help='Zielordner für Ausgaben')
     p.add_argument('--drop_initial', type=float, default=8.0, help='Sekunden am Anfang droppen')
