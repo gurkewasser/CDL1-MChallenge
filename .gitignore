@@ -4,6 +4,7 @@ data/unpacked
 data/features
 archiv/
 processed/
+data/preproc/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
