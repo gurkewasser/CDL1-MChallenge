@@ -141,7 +141,7 @@ def process_all_zips():
         sensor_df = load_sensor_data(folder)
         if sensor_df is None:
             continue
-        sensor_df["label"] = label
+        sensor_df["activity"] = label
         sensor_df["device_id"] = metadata["device_id"]
         sensor_df["device_name"] = metadata["device_name"]
         sensor_df["app_version"] = metadata["app_version"]
