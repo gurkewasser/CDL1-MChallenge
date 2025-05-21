@@ -5,6 +5,19 @@ import numpy as np
 from scipy.signal import butter, filtfilt
 import sys
 from tqdm import tqdm
+import shutil
+
+def clear_directory(directory):
+    """
+    Delete all contents of a directory, but not the directory itself.
+    """
+    if not directory.exists():
+        return
+    for item in directory.iterdir():
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
 
 def preprocess_dataframe(df: pd.DataFrame,
                          time_col: str = 'time',
@@ -139,6 +152,9 @@ def main(args):
     raw_dir = Path(args.raw_dir)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
+
+    # Clear the output directory before writing new files
+    clear_directory(out)
 
     files = get_files_list(raw_dir)
     all_features = []
