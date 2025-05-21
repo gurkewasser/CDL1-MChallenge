@@ -23,9 +23,32 @@ OUTPUT_DIR = DATA_DIR / "processed"
 OUTPUT_PATH = OUTPUT_DIR / "raw_data.parquet"
 PER_FILE_DIR = OUTPUT_DIR / "per_file"
 
+def clear_directory(directory, skip_files=None):
+    """
+    Delete all contents of a directory. Optionally skip files in skip_files.
+    """
+    if not directory.exists():
+        return
+    for item in directory.iterdir():
+        if skip_files and item.name in skip_files:
+            continue
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
 # Ensure all required directories exist
 for d in [DATA_DIR, INPUT_DIR, UNPACK_DIR, OUTPUT_DIR, PER_FILE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
+
+# Clean destination directories before running the script
+# Only clear UNPACK_DIR, PER_FILE_DIR, and OUTPUT_DIR (but not INPUT_DIR or DATA_DIR)
+# For OUTPUT_DIR, do not delete the directory itself, just its contents
+print("🧹 Cleaning destination directories ...")
+clear_directory(UNPACK_DIR)
+clear_directory(PER_FILE_DIR)
+# For OUTPUT_DIR, skip PER_FILE_DIR (so we don't delete the subdir we just cleared)
+clear_directory(OUTPUT_DIR, skip_files={"per_file"})
 
 # Define relevant sensors and columns
 SENSOR_FILES = {
