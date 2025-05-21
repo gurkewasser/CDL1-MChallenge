@@ -4,6 +4,7 @@ import pandas as pd
 from tqdm import tqdm
 import rootutils
 import hashlib
+import shutil
 
 # Setup project root
 root = rootutils.setup_root(__file__, pythonpath=True, cwd=True)
@@ -24,13 +25,37 @@ SENSOR_FILES = {
 
 METADATA_FILE = "Metadata.csv"
 
-def extract_zip_files():
+def extract_nested_zip_files():
+    """
+    Unpacks the massive .zip file in INPUT_DIR, then unzips each individual .zip inside it
+    into UNPACK_DIR, one folder per recording.
+    """
     UNPACK_DIR.mkdir(parents=True, exist_ok=True)
-    for zip_path in INPUT_DIR.glob("*.zip"):
-        target_folder = UNPACK_DIR / zip_path.stem
+    # Find the massive zip file (assume only one in INPUT_DIR)
+    massive_zips = list(INPUT_DIR.glob("*.zip"))
+    if not massive_zips:
+        print("No .zip file found in", INPUT_DIR)
+        return
+    massive_zip_path = massive_zips[0]
+    # Unpack the massive zip to a temp folder
+    temp_extract_dir = INPUT_DIR / "temp_massive_unzip"
+    temp_extract_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(massive_zip_path, 'r') as zip_ref:
+        zip_ref.extractall(temp_extract_dir)
+    # Now, for each .zip file in the temp folder, extract to UNPACK_DIR/<recording_name>
+    for rec_zip in temp_extract_dir.glob("*.zip"):
+        target_folder = UNPACK_DIR / rec_zip.stem
         if not target_folder.exists():
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            with zipfile.ZipFile(rec_zip, 'r') as zip_ref:
                 zip_ref.extractall(target_folder)
+    # Optionally, clean up temp folder
+    # Remove all files and directories inside temp_extract_dir
+    for f in temp_extract_dir.iterdir():
+        if f.is_file():
+            f.unlink()
+        elif f.is_dir():
+            shutil.rmtree(f)
+    temp_extract_dir.rmdir()
 
 def get_label_from_filename(filename):
     return filename.split("_")[0]
@@ -77,18 +102,14 @@ def load_sensor_data(folder):
     return merged
 
 def process_all_zips():
-    extract_zip_files()
+    extract_nested_zip_files()
     raw_rows = []
-    zip_path_lookup = {f.stem: f for f in INPUT_DIR.glob("*.zip")}
+    # Now, after extraction, each folder in UNPACK_DIR is a session
+    # For hash, use the original .zip file for each session (from the temp extraction)
+    # But since we deleted temp, skip hash or set to None
     for folder in tqdm(list(UNPACK_DIR.iterdir()), desc="Processing sessions"):
         label = get_label_from_filename(folder.name)
-        # Find the corresponding zip file and compute its hash
-        zip_path = zip_path_lookup.get(folder.name)
-        if zip_path and zip_path.exists():
-            with open(zip_path, "rb") as f:
-                file_hash = hashlib.md5(f.read()).hexdigest()
-        else:
-            file_hash = None
+        file_hash = None  # Could be added if needed
         metadata = load_metadata(folder)
         sensor_df = load_sensor_data(folder)
         if sensor_df is None:
