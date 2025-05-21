@@ -3,7 +3,6 @@ import pandas as pd
 from tqdm import tqdm
 import rootutils
 import hashlib
-import os
 from pathlib import Path
 
 # Setup project root in a platform-independent way
