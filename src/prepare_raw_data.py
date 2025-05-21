@@ -4,7 +4,6 @@ import pandas as pd
 from tqdm import tqdm
 import rootutils
 import hashlib
-import shutil
 
 # Setup project root
 root = rootutils.setup_root(__file__, pythonpath=True, cwd=True)
@@ -13,6 +12,7 @@ INPUT_DIR = root / "data" / "raw"
 UNPACK_DIR = root / "data" / "unpacked"
 OUTPUT_DIR = root / "data" / "processed"
 OUTPUT_PATH = OUTPUT_DIR / "raw_data.parquet"
+PER_FILE_DIR = OUTPUT_DIR / "per_file"
 
 # Define relevant sensors and columns
 SENSOR_FILES = {
@@ -25,37 +25,19 @@ SENSOR_FILES = {
 
 METADATA_FILE = "Metadata.csv"
 
-def extract_nested_zip_files():
-    """
-    Unpacks the massive .zip file in INPUT_DIR, then unzips each individual .zip inside it
-    into UNPACK_DIR, one folder per recording.
-    """
+def extract_entire_zip(zip_path, extract_to):
+    """Extracts the entire zip file to the given directory."""
+    extract_to.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_to)
+
+def extract_zip_files():
     UNPACK_DIR.mkdir(parents=True, exist_ok=True)
-    # Find the massive zip file (assume only one in INPUT_DIR)
-    massive_zips = list(INPUT_DIR.glob("*.zip"))
-    if not massive_zips:
-        print("No .zip file found in", INPUT_DIR)
-        return
-    massive_zip_path = massive_zips[0]
-    # Unpack the massive zip to a temp folder
-    temp_extract_dir = INPUT_DIR / "temp_massive_unzip"
-    temp_extract_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(massive_zip_path, 'r') as zip_ref:
-        zip_ref.extractall(temp_extract_dir)
-    # Now, for each .zip file in the temp folder, extract to UNPACK_DIR/<recording_name>
-    for rec_zip in temp_extract_dir.glob("*.zip"):
-        target_folder = UNPACK_DIR / rec_zip.stem
+    for zip_path in INPUT_DIR.glob("*.zip"):
+        target_folder = UNPACK_DIR / zip_path.stem
         if not target_folder.exists():
-            with zipfile.ZipFile(rec_zip, 'r') as zip_ref:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(target_folder)
-    # Optionally, clean up temp folder
-    # Remove all files and directories inside temp_extract_dir
-    for f in temp_extract_dir.iterdir():
-        if f.is_file():
-            f.unlink()
-        elif f.is_dir():
-            shutil.rmtree(f)
-    temp_extract_dir.rmdir()
 
 def get_label_from_filename(filename):
     return filename.split("_")[0]
@@ -102,14 +84,24 @@ def load_sensor_data(folder):
     return merged
 
 def process_all_zips():
-    extract_nested_zip_files()
+    # Zuerst alle .zip Dateien komplett entpacken
+    print("Entpacke alle .zip Dateien ...")
+    for zip_path in tqdm(list(INPUT_DIR.glob("*.zip")), desc="Entpacke ZIPs"):
+        extract_entire_zip(zip_path, UNPACK_DIR / zip_path.stem)
+
+    # Dann wie gehabt weiterverarbeiten
     raw_rows = []
-    # Now, after extraction, each folder in UNPACK_DIR is a session
-    # For hash, use the original .zip file for each session (from the temp extraction)
-    # But since we deleted temp, skip hash or set to None
+    zip_path_lookup = {f.stem: f for f in INPUT_DIR.glob("*.zip")}
+    PER_FILE_DIR.mkdir(parents=True, exist_ok=True)
     for folder in tqdm(list(UNPACK_DIR.iterdir()), desc="Processing sessions"):
         label = get_label_from_filename(folder.name)
-        file_hash = None  # Could be added if needed
+        # Find the corresponding zip file and compute its hash
+        zip_path = zip_path_lookup.get(folder.name)
+        if zip_path and zip_path.exists():
+            with open(zip_path, "rb") as f:
+                file_hash = hashlib.md5(f.read()).hexdigest()
+        else:
+            file_hash = None
         metadata = load_metadata(folder)
         sensor_df = load_sensor_data(folder)
         if sensor_df is None:
@@ -120,11 +112,18 @@ def process_all_zips():
         sensor_df["app_version"] = metadata["app_version"]
         sensor_df["file_hash"] = file_hash
         raw_rows.append(sensor_df)
+
+        # Save per-file parquet
+        per_file_name = f"{folder.name}.parquet"
+        per_file_path = PER_FILE_DIR / per_file_name
+        sensor_df.to_parquet(per_file_path, index=False)
+
     if raw_rows:
         df_all = pd.concat(raw_rows, ignore_index=True)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         df_all.to_parquet(OUTPUT_PATH, index=False)
         print(f"✅ Saved raw data to {OUTPUT_PATH}")
+        print(f"✅ Saved {len(raw_rows)} per-file parquet files to {PER_FILE_DIR}")
     else:
         print("⚠️ No valid data found.")
 
