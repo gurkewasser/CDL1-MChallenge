@@ -4,6 +4,7 @@ from tqdm import tqdm
 import rootutils
 import hashlib
 from pathlib import Path
+import shutil
 
 # Setup project root in a platform-independent way
 try:
@@ -15,11 +16,16 @@ except Exception:
     root = Path(__file__).resolve().parent.parent
 
 # Ensure all paths are pathlib.Path objects and platform-independent
-INPUT_DIR = root / "data" / "raw"
-UNPACK_DIR = root / "data" / "unpacked"
-OUTPUT_DIR = root / "data" / "processed"
+DATA_DIR = root / "data"
+INPUT_DIR = DATA_DIR / "raw"
+UNPACK_DIR = DATA_DIR / "unpacked"
+OUTPUT_DIR = DATA_DIR / "processed"
 OUTPUT_PATH = OUTPUT_DIR / "raw_data.parquet"
 PER_FILE_DIR = OUTPUT_DIR / "per_file"
+
+# Ensure all required directories exist
+for d in [DATA_DIR, INPUT_DIR, UNPACK_DIR, OUTPUT_DIR, PER_FILE_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
 
 # Define relevant sensors and columns
 SENSOR_FILES = {
@@ -34,9 +40,10 @@ METADATA_FILE = "Metadata.csv"
 
 def extract_entire_zip(zip_path, extract_to):
     """Extracts the entire zip file to the given directory."""
-    extract_to.mkdir(parents=True, exist_ok=True)
+    extract_path = INPUT_DIR / "unpacked" / zip_path.stem
+    extract_path.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(extract_to)
+        zip_ref.extractall(extract_path)
 
 def extract_zip_files():
     UNPACK_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,6 +51,14 @@ def extract_zip_files():
         target_folder = UNPACK_DIR / zip_path.stem
         if not target_folder.exists():
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(target_folder)
+
+def extract_nested_zip_files(parent_dir):
+    for sub_zip in parent_dir.glob("*.zip"):
+        target_folder = UNPACK_DIR / sub_zip.stem
+        if not target_folder.exists():
+            with zipfile.ZipFile(sub_zip, 'r') as zip_ref:
+                target_folder.mkdir(parents=True, exist_ok=True)
                 zip_ref.extractall(target_folder)
 
 def get_label_from_filename(filename):
@@ -90,17 +105,30 @@ def load_sensor_data(folder):
                            on="seconds_elapsed")
     return merged
 
+def remove_macosx_dir(unpack_dir):
+    """Remove __MACOSX directory if it exists in the given directory."""
+    macosx_dir = unpack_dir / "__MACOSX"
+    if macosx_dir.exists() and macosx_dir.is_dir():
+        shutil.rmtree(macosx_dir)
+
 def process_all_zips():
     # Zuerst alle .zip Dateien komplett entpacken
     print("Entpacke alle .zip Dateien ...")
     for zip_path in tqdm(list(INPUT_DIR.glob("*.zip")), desc="Entpacke ZIPs"):
         extract_entire_zip(zip_path, UNPACK_DIR / zip_path.stem)
+        extract_nested_zip_files(INPUT_DIR / "unpacked" / zip_path.stem)
+
+    # Remove __MACOSX directory if it exists in UNPACK_DIR
+    remove_macosx_dir(UNPACK_DIR)
 
     # Dann wie gehabt weiterverarbeiten
     raw_rows = []
     zip_path_lookup = {f.stem: f for f in INPUT_DIR.glob("*.zip")}
     PER_FILE_DIR.mkdir(parents=True, exist_ok=True)
     for folder in tqdm(list(UNPACK_DIR.iterdir()), desc="Processing sessions"):
+        # Skip __MACOSX directory if it somehow still exists
+        if folder.name == "__MACOSX":
+            continue
         label = get_label_from_filename(folder.name)
         # Find the corresponding zip file and compute its hash
         zip_path = zip_path_lookup.get(folder.name)
