@@ -6,9 +6,10 @@ Dieses Skript führt automatisch folgende Schritte durch:
 
 1) ZIPs entpacken und pro Session Parquet-Dateien erzeugen (in data/processed/per_file).
 2) NDL_MODE=True  → Nur Trainings-Features erzeugen unter data/train/NDL/features_non_dl_train.csv
-   DL_MODE=True   → Train- und Test-Sequenzen erzeugen unter:
+   DL_MODE=True   → Train-, Test-, ValSequenzen erzeugen unter:
                      data/train/DL/dl_data_train.npz
                      data/test/DL/dl_data_test.npz
+                     data/test/DL/dl_data_val.npz #wird nicht preprocessed
 
 Aufruf:
     python full_pipeline.py
@@ -40,7 +41,7 @@ from preprocess_functions import (
 # -------------------- 3) Konfiguration --------------------
 NDL_MODE    = True   # True → nur Train-Features unter data/train/NDL/
 DL_MODE     = True   # True → Train- und Test-Sequenzen unter data/train/DL/ und data/test/DL/
-TRAIN_RATIO = 0.8
+TRAIN_RATIO = 0.7
 RANDOM_SEED = 42
 
 # Preprocessing-Parameter
@@ -60,6 +61,7 @@ PER_FILE_DIR = project_root / "data" / "processed" / "per_file"
 TRAIN_DIR_NDL = project_root  / "data" / "NDL" 
 TRAIN_DIR_DL  = project_root / "data" / "DL" / "TRAIN"
 TEST_DIR_DL   = project_root / "data" / "DL"  / "TEST"
+VALID_DIR_DL  = project_root / "data" / "DL" / "TEST" / "VAL"
 
 # -------------------- 4) Hilfsfunktion: Verzeichnis leeren --------------------
 def clear_directory(directory: Path, skip: set[str] = None):
@@ -88,7 +90,7 @@ def run_preprocessing(
     dl_mode        : False → NDL-Features, True → DL-Sequenzen
     train_ratio    : Anteil der Dateien im Trainingsset (nur bei dl_mode=True relevant)
     random_seed    : Seed für Shuffle
-    mode           : 'train' oder 'test'
+    mode           : 'train', 'test' oder 'val'
     """
     # 1) Zielordner anlegen (oder leeren)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -97,11 +99,25 @@ def run_preprocessing(
     # 2) Bei DL_Mode: File-Level Split
     if dl_mode:
         np.random.seed(random_seed)
-        shuffled   = np.random.permutation(parquet_files)
-        split_idx  = int(len(shuffled) * train_ratio)
-        train_files = list(shuffled[:split_idx])
-        test_files  = list(shuffled[split_idx:])
-        files = train_files if mode == "train" else test_files
+        shuffled = np.random.permutation(parquet_files)
+        n_total = len(shuffled)
+        n_train = int(n_total * train_ratio)
+        n_test = int(n_total * 0.15)
+        n_val = n_total - n_train - n_test
+        print(f"Split: {n_train} train, {n_test} test, {n_val} validation files.")
+
+        train_files = list(shuffled[:n_train])
+        test_files = list(shuffled[n_train:n_train + n_test])
+        val_files = list(shuffled[n_train + n_test:])
+
+        if mode == "train":
+            files = train_files
+        elif mode == "test":
+            files = test_files
+        elif mode == "val":
+            files = val_files
+        else:
+            raise ValueError(f"Unbekannter mode: {mode}")
     else:
         # NDL: Nur Trainingsmodus erlauben
         if mode != "train":
@@ -111,6 +127,20 @@ def run_preprocessing(
 
     if not files:
         print(f"  ⚠️ Keine Dateien für mode='{mode}', dl_mode={dl_mode}")
+        return
+
+    # 3) DL-Validierungsmodus → Rohdaten direkt speichern
+    if dl_mode and mode == "val":
+        raw_dir = output_dir / "raw_validation"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        for pf in tqdm(files, desc="VAL (roh)", ncols=100):
+            try:
+                raw = pd.read_parquet(pf)
+                out_path = raw_dir / (pf.stem + "_raw.parquet")
+                raw.to_parquet(out_path)
+            except Exception:
+                continue
+        print(f"✅ DL (val): {len(list(raw_dir.glob('*.parquet')))} Rohdateien → {raw_dir}")
         return
 
     print(f"\n── Preprocessing: mode={mode}, dl_mode={dl_mode}, Dateien={len(files)} ──")
@@ -223,7 +253,7 @@ def run_preprocessing(
     if dl_mode:
         X = np.stack(all_sequences, axis=0)
         y = np.array(all_labels, dtype=object)
-        suffix = "_train" if mode == "train" else "_test"
+        suffix = "_train" if mode == "train" else "_test" if mode == "test" else "_val"
         out_file = output_dir / f"dl_data{suffix}.npz"
         np.savez_compressed(out_file, X=X, y=y)
         print(f"✅ DL ({mode}): {X.shape[0]} Segmente → {out_file}")
@@ -270,6 +300,15 @@ if __name__ == "__main__":
             train_ratio=TRAIN_RATIO,
             random_seed=RANDOM_SEED,
             mode="test"
+        )
+
+        run_preprocessing(
+            parquet_files=parquet_files,
+            output_dir=VALID_DIR_DL,
+            dl_mode=True,
+            train_ratio=TRAIN_RATIO,
+            random_seed=RANDOM_SEED,
+            mode="val"
         )
 
     print("\n=== Fertig: Pipeline komplett durchgelaufen. ===")
