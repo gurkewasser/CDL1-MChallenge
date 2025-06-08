@@ -1,8 +1,10 @@
-pandas
-numpy
-scipy
-matplotlib
-seaborn
-scikit-learn
-rootutils
+pandas==2.2.3
+numpy==2.2.6
+scipy==1.15.2
+matplotlib==3.10.3
+seaborn==0.13.2
+scikit-learn==1.6.1
+rootutils==1.0.7
+torch==2.7.0
+pathlib
 

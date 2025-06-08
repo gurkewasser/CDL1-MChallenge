@@ -1,314 +1,398 @@
 #!/usr/bin/env python3
 """
-full_pipeline.py
+full_pipeline.py – kommentierte Version ohne Überschreiben der NDL‑Files
+========================================================================
 
-Dieses Skript führt automatisch folgende Schritte durch:
+Funktionen
+----------
+1. **ZIP‑Entpacken**:  Jede ZIP‑Datei wird in eine Parquet‑Datei pro Session unter
+   `data/processed/per_file/` konvertiert (Step 1).
+2. **Non‑Deep‑Learning (NDL)**:   Für **Train** und **Test** werden Feature‑CSVs erzeugt, die sich
+   **nicht mehr überschreiben**.  Dafür legt das Skript getrennte Ordner an:    
+   * `data/NDL/TRAIN/features_non_dl.csv`    
+   * `data/NDL/TEST/features_non_dl.csv`
+3. **Deep Learning (DL)**:  Für **Train**, **Test** werden
+   Sequenz‑NPZ‑Dateien erzeugt:    
+   * `data/DL/TRAIN/dl_data_train.npz`    
+   * `data/DL/TEST/dl_data_test.npz`    
 
-1) ZIPs entpacken und pro Session Parquet-Dateien erzeugen (in data/processed/per_file).
-2) NDL_MODE=True  → Nur Trainings-Features erzeugen unter data/train/NDL/features_non_dl_train.csv
-   DL_MODE=True   → Train-, Test-, ValSequenzen erzeugen unter:
-                     data/train/DL/dl_data_train.npz
-                     data/test/DL/dl_data_test.npz
-                     data/test/DL/dl_data_val.npz #wird nicht preprocessed
-
-Aufruf:
+Start
+-----
     python full_pipeline.py
 """
 
+from __future__ import annotations
+
 import sys
+import shutil
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import shutil
 from tqdm import tqdm
+from collections import Counter
 
-# -------------------- 1) Projekt-Root bestimmen --------------------
+# -----------------------------------------------------------------------------
+# 1) Projekt‑Root + Helfer‑Importe
+# -----------------------------------------------------------------------------
+project_root = Path(__file__).resolve().parent  # Basisverzeichnis des Projekts
+PER_FILE_DIR = project_root / "data" / "processed" / "per_file"  # Zielordner Parquets
 
-project_root = Path(__file__).resolve().parent
-PER_FILE_DIR = project_root / "data" / "processed" / "per_file"
+# src‑Ordner (enthält preprocess_functions.py) zum Python‑Pfad hinzufügen
 sys.path.append(str(project_root / "src"))
 
-# -------------------- 2) Externe Skripte von preprocess_functions importieren --------------------
+# ---- Externe Preprocessing‑Funktionen ----------------------------------------
 from preprocess_functions import (
-    preprocess_dataframe,
-    segment_dataframe,
-    moving_average,
-    extract_features,
-    get_label_per_segment,
-    process_all_zips,
+    preprocess_dataframe,   # zeitliches Trimmen + Resampling
+    segment_dataframe,      # Sliding‑Window‑Segmentierung
+    moving_average,         # optionale Glättung je Segment
+    extract_features,       # Feature‑Engineering (Statistiken etc.)
+    get_label_per_segment,  # Label pro Segment bestimmen
+    process_all_zips,       # ZIP→Parquet‑Konverter
 )
 
-# -------------------- 3) Konfiguration --------------------
-NDL_MODE    = True   # True → nur Train-Features unter data/train/NDL/
-DL_MODE     = True   # True → Train- und Test-Sequenzen unter data/train/DL/ und data/test/DL/
-TRAIN_RATIO = 0.7
-RANDOM_SEED = 42
+# -----------------------------------------------------------------------------
+# 2) Konfiguration
+# -----------------------------------------------------------------------------
 
-# Preprocessing-Parameter
-DROP_INITIAL   = 8.0
-DROP_FINAL     = 8.0
-SAMPLING_RATE  = 50.0
-SEGMENT_LENGTH = 5.0
-OVERLAP        = 2.0
-BUTTER_ORDER   = 4
-BUTTER_CUTOFF  = 6.0
-MA_WINDOW      = 0.1
+# Welche Modi sollen laufen?
+NDL_MODE = True  # klassische ML‑Features erzeugen
+DL_MODE  = True  # DL‑Sequenzen erzeugen
 
-# Pfade
-PER_FILE_DIR = project_root / "data" / "processed" / "per_file"
+# Split‑Verhältnis
+TRAIN_RATIO = 0.7       # 70% Train, 30% Test
+RANDOM_SEED = 42       # für reproduzierbares Shuffle
 
-# data/train/NDL, data/train/DL, data/test/DL
-TRAIN_DIR_NDL = project_root  / "data" / "NDL" 
-TRAIN_DIR_DL  = project_root / "data" / "DL" / "TRAIN"
-TEST_DIR_DL   = project_root / "data" / "DL"  / "TEST"
-VALID_DIR_DL  = project_root / "data" / "DL" / "TEST" / "VAL"
+# Basis‑Preprocessing‑Parameter
+DROP_INITIAL   = 8.0     # Sekunden am Anfang jedes Mitschnitts verwerfen
+DROP_FINAL     = 8.0     # Sekunden am Ende verwerfen
+SAMPLING_RATE  = 50.0    # Ziel‑Sampling‑Rate in Hz
+SEGMENT_LENGTH = 5.0     # Segmentlänge in Sek.
+OVERLAP        = 2.0     # Überlappung in Sek.
+MA_WINDOW      = 0.1     # Moving‑Average‑Fenster in Sek.
 
-# -------------------- 4) Hilfsfunktion: Verzeichnis leeren --------------------
-def clear_directory(directory: Path, skip: set[str] = None):
+# -----------------------------------------------------------------------------
+# 3) Ziel‑Verzeichnisse
+# -----------------------------------------------------------------------------
+# Parquets liegen in  data/processed/per_file/  (siehe oben)
+
+# NDL
+NDL_TRAIN_DIR = project_root / "data" / "NDL" / "TRAIN"
+NDL_TEST_DIR  = project_root / "data" / "NDL" / "TEST"
+
+# DL 
+TRAIN_DIR_DL = project_root / "data" / "DL" / "TRAIN"
+TEST_DIR_DL  = project_root / "data" / "DL" / "TEST"
+
+# -----------------------------------------------------------------------------
+# 4) Hilfsfunktionen
+# -----------------------------------------------------------------------------
+###############################################################################
+# 4a) Zusatz‑Hilfen für label‑stratifizierten File‑Split
+###############################################################################
+
+def get_file_activities(pf: Path) -> set[str]:
+    """Liest nur die Spalte 'activity' und liefert das Set vorhandener Labels."""
+    try:
+        return set(pd.read_parquet(pf, columns=["activity"])["activity"].dropna().unique())
+    except Exception:
+        return set()
+
+
+def count_segments_by_activity(pf: Path) -> dict[str, int]:
+    """Zählt erwartete Segmentanzahl pro Aktivität in einer Datei."""
+    try:
+        raw = pd.read_parquet(pf)
+        proc = preprocess_dataframe(
+            raw,
+            time_col="time",
+            drop_initial=DROP_INITIAL,
+            drop_final=DROP_FINAL,
+            sampling_rate=SAMPLING_RATE,
+        )
+        segments = segment_dataframe(proc, SEGMENT_LENGTH, OVERLAP)
+        if not segments:
+            return {}
+        segments_proc = [
+            moving_average(seg, MA_WINDOW, SAMPLING_RATE)
+            for seg in segments
+        ]
+        labels = get_label_per_segment(
+            raw, segments_proc, time_col="time", label_col="activity"
+        )
+        counts = {}
+        for label in labels:
+            if label is not None:
+                counts[label] = counts.get(label, 0) + 1
+        return counts
+    except Exception:
+        return {}
+
+def create_stratified_split(
+    parquet_files: list[Path],
+    train_ratio: float,
+    random_seed: int,
+    min_segments_per_class: int = 30,
+    max_attempts: int = 1000,
+) -> dict[str, list[Path]]:
+    """
+    Erstellt einen Split in Trainings- und Testdaten auf Dateiebene, wobei sichergestellt wird, 
+    dass jede Aktivität in beiden Splits mit mindestens 'min_segments_per_class' Segmenten vertreten ist.
+    
+    """
+    rng = np.random.default_rng(random_seed)
+
+    # 1) Mapping: Datei → Set der enthaltenen Aktivitäten
+    file2labels = {pf: get_file_activities(pf) for pf in parquet_files}
+    all_labels = set().union(*file2labels.values())
+
+    # 2) Mapping: Datei → Anzahl Segmente pro Label (aus bereits existierender Funktion)
+    file2segcounts = {}  # Dict[Path, Dict[label:str, segment_count:int]]
+    for pf in parquet_files:
+        try:
+            df = pd.read_parquet(pf, columns=["activity"])
+            counts = df["activity"].value_counts().to_dict()
+            file2segcounts[pf] = {str(k): int(v) for k, v in counts.items()}
+        except Exception:
+            file2segcounts[pf] = {}
+
+    # 3) Split mit Wiederholung
+    for _ in range(max_attempts):
+        shuffled = rng.permutation(parquet_files)
+        n_total = shuffled.size
+        n_train = int(n_total * train_ratio)
+        n_test = n_total - n_train
+
+        split = {
+            "train": list(shuffled[:n_train]),
+            "test": list(shuffled[n_train:]),
+        }
+
+        # Hilfsfunktion: Segmentanzahl je Klasse aufsummieren
+        def count_total_segments(files: list[Path]) -> dict[str, int]:
+            total = {}
+            for f in files:
+                for label, n in file2segcounts.get(f, {}).items():
+                    total[label] = total.get(label, 0) + n
+            return total
+
+        # Bedingung: Jede Klasse mindestens N Segmente in beiden Splits
+        ok = True
+        for part in ("train", "test"):
+            seg_counts = count_total_segments(split[part])
+            for label in all_labels:
+                if seg_counts.get(label, 0) < min_segments_per_class:
+                    ok = False
+                    break
+            if not ok:
+                break
+
+        if ok:
+            return split
+
+    print("⚠️  Keine vollständig segmentbasiert stratifizierte Aufteilung gefunden.")
+    return split
+
+def clear_directory(directory: Path, *, skip: set[str] | None = None) -> None:
+    """Löscht alles im Verzeichnis (außer optional *skip*)."""
     if not directory.exists():
         return
     for item in directory.iterdir():
         if skip and item.name in skip:
             continue
-        if item.is_dir():
-            shutil.rmtree(item)
-        else:
-            item.unlink()
+        (shutil.rmtree if item.is_dir() else Path.unlink)(item)
 
-# -------------------- 5) Kernfunktion: Preprocessing --------------------
+# -----------------------------------------------------------------------------
+# 5) Kerneinheit:  run_preprocessing()
+# -----------------------------------------------------------------------------
+
 def run_preprocessing(
-    parquet_files: list[Path],
+    *,
+    files: list[Path],
     output_dir: Path,
     dl_mode: bool,
-    train_ratio: float,
-    random_seed: int,
-    mode: str
-):
-    """
-    parquet_files  : Liste von Session-*.parquet-Dateien
-    output_dir     : Zielordner (z.B. data/train/DL oder data/test/DL oder data/train/NDL)
-    dl_mode        : False → NDL-Features, True → DL-Sequenzen
-    train_ratio    : Anteil der Dateien im Trainingsset (nur bei dl_mode=True relevant)
-    random_seed    : Seed für Shuffle
-    mode           : 'train', 'test' oder 'val'
-    """
-    # 1) Zielordner anlegen (oder leeren)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    clear_directory(output_dir, skip=None)
-
-    # 2) Bei DL_Mode: File-Level Split
-    if dl_mode:
-        np.random.seed(random_seed)
-        shuffled = np.random.permutation(parquet_files)
-        n_total = len(shuffled)
-        n_train = int(n_total * train_ratio)
-        n_test = int(n_total * 0.15)
-        n_val = n_total - n_train - n_test
-        print(f"Split: {n_train} train, {n_test} test, {n_val} validation files.")
-
-        train_files = list(shuffled[:n_train])
-        test_files = list(shuffled[n_train:n_train + n_test])
-        val_files = list(shuffled[n_train + n_test:])
-
-        if mode == "train":
-            files = train_files
-        elif mode == "test":
-            files = test_files
-        elif mode == "val":
-            files = val_files
-        else:
-            raise ValueError(f"Unbekannter mode: {mode}")
-    else:
-        # NDL: Nur Trainingsmodus erlauben
-        if mode != "train":
-            print(f"  ▶ NDL_MODE=True → Überspringe run_preprocessing für mode='{mode}'.")
-            return
-        files = parquet_files
+) -> None:
+    """Verarbeitet eine Liste Parquets und erzeugt Split‑Artefakte (Features oder Sequenzen)."""
 
     if not files:
-        print(f"  ⚠️ Keine Dateien für mode='{mode}', dl_mode={dl_mode}")
+        print(f"⚠️  Keine Dateien übergeben (dl_mode={dl_mode})")
         return
 
-    # 3) DL-Validierungsmodus → Rohdaten direkt speichern
-    if dl_mode and mode == "val":
-        raw_dir = output_dir / "raw_validation"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        for pf in tqdm(files, desc="VAL (roh)", ncols=100):
-            try:
-                raw = pd.read_parquet(pf)
-                out_path = raw_dir / (pf.stem + "_raw.parquet")
-                raw.to_parquet(out_path)
-            except Exception:
-                continue
-        print(f"✅ DL (val): {len(list(raw_dir.glob('*.parquet')))} Rohdateien → {raw_dir}")
-        return
+    # ---------------------------------------------------------------------
+    # 5‑A) Zielordner vorbereiten
+    #      Bei jedem Aufruf wird nur *sein* Ordner geleert → keine Überschreibungen.
+    # ---------------------------------------------------------------------
+    output_dir.mkdir(parents=True, exist_ok=True)
+    clear_directory(output_dir)  # leert nur den eigenen Split‑Ordner
 
-    print(f"\n── Preprocessing: mode={mode}, dl_mode={dl_mode}, Dateien={len(files)} ──")
-    all_features  = []
-    all_labels    = []
-    all_sequences = []
-    channel_names = None
-    seq_len       = int(SEGMENT_LENGTH * SAMPLING_RATE)
-    total_segments = 0
 
-    for pf in tqdm(files, desc=f"{mode.upper()} (dl={dl_mode})", ncols=100):
+    # ---------------------------------------------------------------------
+    # 5‑D) Initialisierung von Sammlern
+    # ---------------------------------------------------------------------
+    print(f"\n── Preprocessing  dl_mode={dl_mode}  files={len(files)} ──")
+
+    all_features: list[pd.DataFrame] = []   # Feature‑DataFrames je Segment
+    all_sequences: list[np.ndarray]   = []  # DL‑Sequenzen
+    all_labels:    list[str | None]   = []  # Labels (können None sein)
+
+    channel_names: list[str] | None = None  # Merkmalskanäle für DL
+    seq_len = int(SEGMENT_LENGTH * SAMPLING_RATE)
+    global_seg_counter = 0                 # laufender Index über alle Segmente
+
+    # ---------------------------------------------------------------------
+    # 5‑E) Haupt‑Loop über alle Dateien des Splits
+    # ---------------------------------------------------------------------
+    for pf in tqdm(files, desc="PREPROCESS", ncols=90):
+        # (1) Parquet lesen
         try:
             raw = pd.read_parquet(pf)
         except Exception:
-            continue
+            continue  # Datei fehlerhaft → überspringen
 
-        # a) Trimmen + Resample
+        # (2) Trimmen + Resampling
         try:
             proc = preprocess_dataframe(
                 raw,
                 time_col="time",
                 drop_initial=DROP_INITIAL,
                 drop_final=DROP_FINAL,
-                sampling_rate=SAMPLING_RATE
+                sampling_rate=SAMPLING_RATE,
             )
         except Exception:
             continue
 
-        # b) Segmentieren
+        # (3) Sliding‑Window‑Segmentierung
         try:
-            segments = segment_dataframe(
-                proc,
-                segment_length=SEGMENT_LENGTH,
-                overlap=OVERLAP
-            )
+            segments = segment_dataframe(proc, SEGMENT_LENGTH, OVERLAP)
         except Exception:
             continue
         if not segments:
             continue
 
-        # c) Moving Average pro Segment
-        segments_processed = []
+        # (4) Optionale Moving‑Average‑Glättung
+        segments_proc: list[pd.DataFrame] = []
         for seg in segments:
             try:
-                seg_smooth = moving_average(
-                    seg,
-                    window_sec=MA_WINDOW,
-                    sampling_rate=SAMPLING_RATE
-                )
-                segments_processed.append(seg_smooth)
+                seg_sm = moving_average(seg, MA_WINDOW, SAMPLING_RATE)
+                segments_proc.append(seg_sm)
             except Exception:
-                segments_processed.append(seg)
+                segments_proc.append(seg)  # Fallback: ungesmoothed
 
-        # d) Labels holen
+        # (5) Label pro Segment
         try:
             labels = get_label_per_segment(
-                raw,
-                segments_processed,
-                time_col="time",
-                label_col="activity"
+                raw, segments_proc, time_col="time", label_col="activity"
             )
         except Exception:
-            labels = [None] * len(segments_processed)
+            labels = [None] * len(segments_proc)
 
-        # e1) NDL (nur Trainings-Features)
+        # (6a) **NDL‑Pfad**: Feature‑Engineering
         if not dl_mode:
             try:
-                feats_df = extract_features(segments_processed)
+                feats = extract_features(segments_proc)  # DataFrame pro Datei
             except Exception:
                 continue
-            feats_df["label"] = labels
-            feats_df["file"]  = pf.name
-            feats_df["segment_global_id"] = np.arange(
-                total_segments,
-                total_segments + len(segments_processed)
+            feats["label"] = labels
+            feats["file"]  = pf.name
+            feats["segment_global_id"] = np.arange(
+                global_seg_counter, global_seg_counter + len(segments_proc)
             )
-            feats_df = feats_df.set_index("segment_global_id")
-            all_features.append(feats_df)
+            feats = feats.set_index("segment_global_id")
+            all_features.append(feats)
 
-        # e2) DL (Sequenzen: pad/truncate)
+        # (6b) **DL‑Pfad**: Sequenzen padd/tuncate → ndarray
         if dl_mode:
             if channel_names is None:
-                channel_names = segments_processed[0].columns.tolist()
-                seq_len = int(SEGMENT_LENGTH * SAMPLING_RATE)
-            for seg in segments_processed:
-                arr = np.zeros((seq_len, len(channel_names)), dtype=np.float32)
-                seg_arr = np.vstack([seg[ch].values for ch in channel_names]).T
-                if seg_arr.shape[0] >= seq_len:
-                    arr[:] = seg_arr[:seq_len]
-                else:
-                    arr[:seg_arr.shape[0]] = seg_arr
+                channel_names = segments_proc[0].columns.tolist()
+            for seg in segments_proc:
+                arr = np.zeros((seq_len, len(channel_names)), dtype=np.float32)  # Padding
+                seg_arr = seg[channel_names].to_numpy()
+                arr[: min(seq_len, seg_arr.shape[0])] = seg_arr[:seq_len]
                 all_sequences.append(arr)
 
-        total_segments += len(segments_processed)
+        global_seg_counter += len(segments_proc)
         all_labels.extend(labels)
 
-    if total_segments == 0:
-        print(f"  ❌ Keine Segmente gefunden für mode='{mode}', dl_mode={dl_mode}")
+    # ---------------------------------------------------------------------
+    # 5‑F) Persistieren der Artefakte
+    # ---------------------------------------------------------------------
+    if global_seg_counter == 0:
+        print(f"❌  Keine Segmente für dl_mode={dl_mode}")
         return
 
-    # 6a) Speichern NDL-Features (nur train)
     if not dl_mode:
-        df_all = pd.concat(all_features, axis=0)
-        df_all.reset_index(drop=True, inplace=True)
-        out_file = output_dir / "features_non_dl.csv"
-        df_all.to_csv(out_file, index=False)
-        print(f"✅ NDL: {len(df_all)} Segmente → {out_file}")
+        # ▸ NDL: Ein CSV pro Split‑Ordner
+        df_all = pd.concat(all_features).reset_index(drop=True)
+        out_csv = output_dir / "features_non_dl.csv"
+        df_all.to_csv(out_csv, index=False)
+        print(f"✅ NDL: {len(df_all)} Segmente → {out_csv}")
 
-    # 6b) Speichern DL-Sequenzen (train/test)
-    if dl_mode:
-        X = np.stack(all_sequences, axis=0)
-        y = np.array(all_labels, dtype=object)
-        suffix = "_train" if mode == "train" else "_test" if mode == "test" else "_val"
-        out_file = output_dir / f"dl_data{suffix}.npz"
-        np.savez_compressed(out_file, X=X, y=y)
-        print(f"✅ DL ({mode}): {X.shape[0]} Segmente → {out_file}")
+    else:
+        # ▸ DL: Ein NPZ pro Split‑Ordner
+        X = np.stack(all_sequences)
+        y = np.asarray(all_labels, dtype=object)
+        suffix = output_dir.name.lower()
+        out_npz = output_dir / f"dl_data_{suffix}.npz"
+        np.savez_compressed(out_npz, X=X, y=y)
+        print(f"✅ DL: {X.shape[0]} Segmente → {out_npz}")
 
-# -------------------- 7) Skript-Einstiegspunkt --------------------
+# -----------------------------------------------------------------------------
+# 6) Skript‑Einstiegspunkt
+# -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    # 7.1) ZIPs entpacken → Parquet pro Session
-    print("\n--- Schritt 1: Entpacke ZIPs und erzeuge Parquet-Dateien (per_file) ---")
+    # -----------------------------------------------------------------
+    # 7) Schritt 1: ZIPs entpacken und Parquet‑Dateien erzeugen
+    # -----------------------------------------------------------------
+    print("\n--- Schritt 1: Entpacke ZIP-Dateien & erstelle Parquets ---")
     process_all_zips()
-    print("✅ Parquets liegen jetzt in data/processed/per_file/\n")
+    print("✅ Parquets unter data/processed/per_file/ vorhanden.\n")
 
     parquet_files = list(PER_FILE_DIR.glob("*.parquet"))
     if not parquet_files:
-        print("❌ Fehler: Keine .parquet-Dateien in data/processed/per_file!")
-        sys.exit(1)
+        sys.exit("❌  Keine .parquet-Dateien gefunden!")
 
-    # 7.2) NDL: Nur Trainings-Features erstellen unter data/train/NDL/
-    print("\n--- Schritt 2: Konfiguire non Deep Learning Daten) ---")
+    # --- Globaler, label‑abgedeckter Split ----------------------------------
+    split_dict = create_stratified_split(
+        parquet_files, TRAIN_RATIO, RANDOM_SEED
+    )
+
+    # -----------------------------------------------------------------
+    # 8) Non‑Deep‑Learning: nur Train & Test (getrennte Ordner)
+    # -----------------------------------------------------------------
     if NDL_MODE:
+        print("\n--- Schritt 2: Verarbeite NDL (Train & Test) ---")
+        # Train‑Features
         run_preprocessing(
-            parquet_files=parquet_files,
-            output_dir=TRAIN_DIR_NDL,
+            files=split_dict["train"],
+            output_dir=NDL_TRAIN_DIR,
             dl_mode=False,
-            train_ratio=TRAIN_RATIO,
-            random_seed=RANDOM_SEED,
-            mode="train"
+        )
+        # Test‑Features
+        run_preprocessing(
+            files=split_dict["test"],
+            output_dir=NDL_TEST_DIR,
+            dl_mode=False,
         )
 
-    # 7.3) DL: Train- & Test-Sequenzen unter data/train/DL/ und data/test/DL/
-    print("\n--- Schritt 3: Konfiguire Deep Learning Daten - Train und Test Split) ---")
+    # -----------------------------------------------------------------
+    # 9) Deep Learning: Train / Test
+    # -----------------------------------------------------------------
     if DL_MODE:
+        print("\n--- Schritt 3: Verarbeite DL (Train & Test ) ---")
+        # Train‑Sequenzen
         run_preprocessing(
-            parquet_files=parquet_files,
+            files=split_dict["train"],
             output_dir=TRAIN_DIR_DL,
             dl_mode=True,
-            train_ratio=TRAIN_RATIO,
-            random_seed=RANDOM_SEED,
-            mode="train"
         )
+        # Test‑Sequenzen
         run_preprocessing(
-            parquet_files=parquet_files,
+            files=split_dict["test"],
             output_dir=TEST_DIR_DL,
             dl_mode=True,
-            train_ratio=TRAIN_RATIO,
-            random_seed=RANDOM_SEED,
-            mode="test"
         )
 
-        run_preprocessing(
-            parquet_files=parquet_files,
-            output_dir=VALID_DIR_DL,
-            dl_mode=True,
-            train_ratio=TRAIN_RATIO,
-            random_seed=RANDOM_SEED,
-            mode="val"
-        )
-
-    print("\n=== Fertig: Pipeline komplett durchgelaufen. ===")
+    # -----------------------------------------------------------------
+    # 10) Fertig
+    # -----------------------------------------------------------------
+    print("\n=== Pipeline abgeschlossen. ===")

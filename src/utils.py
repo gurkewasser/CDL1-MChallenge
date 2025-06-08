@@ -128,7 +128,7 @@ def test_no_data_leakage(df, X_train, X_test, y_train, y_test):
         "Die Spalten von X_train und X_test weichen voneinander ab."
     )
     
-    print("Kein Data Leakage entdeckt: Train/​Test-Indizes sind disjunkt und entsprechen dem Original-Index.")
+    print("✅ Kein Data Leakage entdeckt")
 
 
 
