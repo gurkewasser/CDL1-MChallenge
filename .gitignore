@@ -177,3 +177,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+data/
+data/NDL/TRAIN/features_non_dl.csv
+data/NDL/TEST/features_non_dl.csv
+data/DL/TRAIN/dl_data_train.npz
+data/DL/TEST/dl_data_test.npz
