@@ -1,10 +1,7 @@
-data/raw
+data/*
 .DS_Store
-data/unpacked
-data/features
 archiv/
 processed/
-data/preproc/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
