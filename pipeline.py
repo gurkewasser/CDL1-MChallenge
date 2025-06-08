@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sys
 import shutil
+import re
 from pathlib import Path
 
 import numpy as np
@@ -332,6 +333,46 @@ def run_preprocessing(
 # 6) Skript‑Einstiegspunkt
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
+    # -----------------------------------------------------------------
+    # 0) Erstelle die Ordner raw, processed, unpacked falls nicht vorhanden
+    # -----------------------------------------------------------------
+    data_dir = project_root / "data"
+    raw_dir = data_dir / "raw"
+    processed_dir = data_dir / "processed"
+    unpacked_dir = data_dir / "unpacked"
+
+    for d in [raw_dir, processed_dir, unpacked_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    zip_pattern = re.compile(r".+_data_raw_iseni_hatemo\.zip$")
+    found_zip = None
+    for f in data_dir.glob("*_data_raw_iseni_hatemo.zip"):
+        if zip_pattern.match(f.name):
+            found_zip = f
+            break
+
+    if found_zip is not None:
+        # Zielname: cdl1_data_raw-iseni_hatemo.zip (mit Bindestrich, wie in der Instruktion)
+        new_zip_name = "cdl1_data_raw-iseni_hatemo.zip"
+        renamed_zip_path = data_dir / new_zip_name
+
+        try:
+            # Umbenennen (falls nötig)
+            if found_zip.name != new_zip_name:
+                found_zip.rename(renamed_zip_path)
+                print(f"✅ Umbenannt: {found_zip} → {renamed_zip_path}")
+            else:
+                renamed_zip_path = found_zip  # Bereits richtiger Name
+
+            # Nach data/raw verschieben
+            zip_dst = raw_dir / new_zip_name
+            shutil.move(str(renamed_zip_path), str(zip_dst))
+            print(f"✅ Verschoben: {renamed_zip_path} → {zip_dst}")
+        except Exception as e:
+            print(f"⚠️  Konnte ZIP nicht umbenennen/verschieben: {e}")
+    else:
+        print(f"⚠️  Keine passende ZIP-Datei gefunden im {data_dir} (erwartet: *_data_raw_iseni_hatemo.zip)")
+
     # -----------------------------------------------------------------
     # 7) Schritt 1: ZIPs entpacken und Parquet‑Dateien erzeugen
     # -----------------------------------------------------------------
