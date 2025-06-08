@@ -64,7 +64,7 @@ DROP_INITIAL   = 8.0     # Sekunden am Anfang jedes Mitschnitts verwerfen
 DROP_FINAL     = 8.0     # Sekunden am Ende verwerfen
 SAMPLING_RATE  = 50.0    # Ziel‑Sampling‑Rate in Hz
 SEGMENT_LENGTH = 5.0     # Segmentlänge in Sek.
-OVERLAP        = 2.0     # Überlappung in Sek.
+OVERLAP        = 2.5     # Überlappung in Sek.
 MA_WINDOW      = 0.1     # Moving‑Average‑Fenster in Sek.
 
 # -----------------------------------------------------------------------------
