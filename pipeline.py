@@ -27,7 +27,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from collections import Counter
 
 # -----------------------------------------------------------------------------
 # 1) Projekt‑Root + Helfer‑Importe
@@ -56,7 +55,7 @@ NDL_MODE = True  # klassische ML‑Features erzeugen
 DL_MODE  = True  # DL‑Sequenzen erzeugen
 
 # Split‑Verhältnis
-TRAIN_RATIO = 0.7       # 70% Train, 30% Test
+TRAIN_RATIO = 0.8       # 70% Train, 30% Test
 RANDOM_SEED = 42       # für reproduzierbares Shuffle
 
 # Basis‑Preprocessing‑Parameter
