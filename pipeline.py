@@ -56,8 +56,8 @@ NDL_MODE = True  # klassische ML‑Features erzeugen
 DL_MODE  = True  # DL‑Sequenzen erzeugen
 
 # Split‑Verhältnis
-TRAIN_RATIO = 0.8       # 70% Train, 30% Test
-RANDOM_SEED = 42       # für reproduzierbares Shuffle
+TRAIN_RATIO = 0.8       # 80% Train, 20% Test
+RANDOM_SEED = 690       # für reproduzierbares Shuffle
 
 # Basis‑Preprocessing‑Parameter
 DROP_INITIAL   = 8.0     # Sekunden am Anfang jedes Mitschnitts verwerfen
