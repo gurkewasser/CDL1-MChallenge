@@ -56,7 +56,7 @@ NDL_MODE = True  # klassische ML‑Features erzeugen
 DL_MODE  = True  # DL‑Sequenzen erzeugen
 
 # Split‑Verhältnis
-TRAIN_RATIO = 0.8       # 80% Train, 20% Test
+TRAIN_RATIO = 0.75       # 75% Train, 25% Test
 RANDOM_SEED = 690       # für reproduzierbares Shuffle
 
 # Basis‑Preprocessing‑Parameter
@@ -312,16 +312,15 @@ def run_preprocessing(
     if global_seg_counter == 0:
         print(f"❌  Keine Segmente für dl_mode={dl_mode}")
         return
-
+    
     if not dl_mode:
-        # ▸ NDL: Ein CSV pro Split‑Ordner
         df_all = pd.concat(all_features).reset_index(drop=True)
-        out_csv = output_dir / "features_non_dl.csv"
+        suffix = output_dir.name.lower()
+        out_csv = output_dir / f"features_non_dl_{suffix}.csv"
         df_all.to_csv(out_csv, index=False)
         print(f"✅ NDL: {len(df_all)} Segmente → {out_csv}")
 
     else:
-        # ▸ DL: Ein NPZ pro Split‑Ordner
         X = np.stack(all_sequences)
         y = np.asarray(all_labels, dtype=object)
         suffix = output_dir.name.lower()
@@ -346,7 +345,7 @@ if __name__ == "__main__":
 
     zip_pattern = re.compile(r".+_data_raw_iseni_hatemo\.zip$")
     found_zip = None
-    for f in data_dir.glob("*_data_raw-iseni_hatemo.zip"):
+    for f in data_dir.glob("*_data_raw_iseni_hatemo.zip"):
         if zip_pattern.match(f.name):
             found_zip = f
             break
