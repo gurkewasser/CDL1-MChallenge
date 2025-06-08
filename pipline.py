@@ -1,8 +1,5 @@
-#!/usr/bin/env python3
-"""
-full_pipeline.py – kommentierte Version ohne Überschreiben der NDL‑Files
-========================================================================
 
+"""
 Funktionen
 ----------
 1. **ZIP‑Entpacken**:  Jede ZIP‑Datei wird in eine Parquet‑Datei pro Session unter
@@ -48,14 +45,13 @@ from preprocess_functions import (
     moving_average,         # optionale Glättung je Segment
     extract_features,       # Feature‑Engineering (Statistiken etc.)
     get_label_per_segment,  # Label pro Segment bestimmen
-    process_all_zips,       # ZIP→Parquet‑Konverter
+    process_all_zips,       # ZIP -> Parquet‑Konverter
 )
 
 # -----------------------------------------------------------------------------
 # 2) Konfiguration
 # -----------------------------------------------------------------------------
 
-# Welche Modi sollen laufen?
 NDL_MODE = True  # klassische ML‑Features erzeugen
 DL_MODE  = True  # DL‑Sequenzen erzeugen
 
@@ -87,9 +83,6 @@ TEST_DIR_DL  = project_root / "data" / "DL" / "TEST"
 # -----------------------------------------------------------------------------
 # 4) Hilfsfunktionen
 # -----------------------------------------------------------------------------
-###############################################################################
-# 4a) Zusatz‑Hilfen für label‑stratifizierten File‑Split
-###############################################################################
 
 def get_file_activities(pf: Path) -> set[str]:
     """Liest nur die Spalte 'activity' und liefert das Set vorhandener Labels."""
@@ -227,7 +220,7 @@ def run_preprocessing(
 
 
     # ---------------------------------------------------------------------
-    # 5‑D) Initialisierung von Sammlern
+    # 5‑B) Initialisierung von Sammlern
     # ---------------------------------------------------------------------
     print(f"\n── Preprocessing  dl_mode={dl_mode}  files={len(files)} ──")
 
@@ -240,7 +233,7 @@ def run_preprocessing(
     global_seg_counter = 0                 # laufender Index über alle Segmente
 
     # ---------------------------------------------------------------------
-    # 5‑E) Haupt‑Loop über alle Dateien des Splits
+    # 5‑C) Haupt‑Loop über alle Dateien des Splits
     # ---------------------------------------------------------------------
     for pf in tqdm(files, desc="PREPROCESS", ncols=90):
         # (1) Parquet lesen
@@ -314,7 +307,7 @@ def run_preprocessing(
         all_labels.extend(labels)
 
     # ---------------------------------------------------------------------
-    # 5‑F) Persistieren der Artefakte
+    # 5‑D) Persistieren der Artefakte
     # ---------------------------------------------------------------------
     if global_seg_counter == 0:
         print(f"❌  Keine Segmente für dl_mode={dl_mode}")
