@@ -254,12 +254,13 @@ def process_all_zips() -> None:
             session_name = folder.name
             label = get_label_from_filename(session_name)
 
-            # MD5-Hash der Original-ZIP (falls vorhanden)
-            file_hash = None
-            zip_path = zip_path_lookup.get(session_name)
-            if zip_path and zip_path.exists():
-                with open(zip_path, "rb") as f:
-                    file_hash = hashlib.md5(f.read()).hexdigest()
+            # MD5-Hash aus allen Session-CSV-Dateien berechnen
+            hash_md5 = hashlib.md5()
+            for csv_file in sorted(folder.rglob("*.csv")):
+                with open(csv_file, "rb") as f:
+                    for chunk in iter(lambda: f.read(4096), b""):
+                        hash_md5.update(chunk)
+            file_hash = hash_md5.hexdigest()
 
             # Metadata- und Sensor-Daten laden
             metadata  = load_metadata(folder)
