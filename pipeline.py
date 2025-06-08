@@ -346,14 +346,14 @@ if __name__ == "__main__":
 
     zip_pattern = re.compile(r".+_data_raw_iseni_hatemo\.zip$")
     found_zip = None
-    for f in data_dir.glob("*_data_raw_iseni_hatemo.zip"):
+    for f in data_dir.glob("*_data_raw-iseni_hatemo.zip"):
         if zip_pattern.match(f.name):
             found_zip = f
             break
 
     if found_zip is not None:
         # Zielname: cdl1_data_raw-iseni_hatemo.zip (mit Bindestrich, wie in der Instruktion)
-        new_zip_name = "cdl1_data_raw_iseni_hatemo.zip"
+        new_zip_name = "cdl1_data_raw-iseni_hatemo.zip"
         renamed_zip_path = data_dir / new_zip_name
 
         try:
