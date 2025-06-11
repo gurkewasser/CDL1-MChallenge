@@ -125,66 +125,75 @@ def create_stratified_split(
     parquet_files: list[Path],
     train_ratio: float,
     random_seed: int,
-    min_segments_per_class: int = 30,
     max_attempts: int = 1000,
 ) -> dict[str, list[Path]]:
     """
-    Erstellt einen Split in Trainings- und Testdaten auf Dateiebene, wobei sichergestellt wird, 
-    dass jede Aktivität in beiden Splits mit mindestens 'min_segments_per_class' Segmenten vertreten ist.
-    
+    Erstellt einen Split in Trainings- und Testdaten auf Dateiebene, wobei die
+    Verteilung der Aktivitätsklassen möglichst ähnlich ist. Kein Mindestsegment-Kriterium.
     """
     rng = np.random.default_rng(random_seed)
 
-    # 1) Mapping: Datei → Set der enthaltenen Aktivitäten
-    file2labels = {pf: get_file_activities(pf) for pf in parquet_files}
-    all_labels = set().union(*file2labels.values())
-
-    # 2) Mapping: Datei → Anzahl Segmente pro Label (aus bereits existierender Funktion)
-    file2segcounts = {}  # Dict[Path, Dict[label:str, segment_count:int]]
+    # Datei → Anzahl Segmente pro Label
+    file2segcounts = {}
+    all_labels = set()
     for pf in parquet_files:
         try:
             df = pd.read_parquet(pf, columns=["activity"])
             counts = df["activity"].value_counts().to_dict()
             file2segcounts[pf] = {str(k): int(v) for k, v in counts.items()}
+            all_labels.update(counts.keys())
         except Exception:
             file2segcounts[pf] = {}
 
-    # 3) Split mit Wiederholung
-    for _ in range(max_attempts):
-        shuffled = rng.permutation(parquet_files)
-        n_total = shuffled.size
-        n_train = int(n_total * train_ratio)
-        n_test = n_total - n_train
-
-        split = {
-            "train": list(shuffled[:n_train]),
-            "test": list(shuffled[n_train:]),
-        }
-
-        # Hilfsfunktion: Segmentanzahl je Klasse aufsummieren
-        def count_total_segments(files: list[Path]) -> dict[str, int]:
+    # Bewertungsfunktion: maximale absolute Abweichung (%) je Klasse
+    def imbalance(split):
+        def count(files):
             total = {}
             for f in files:
                 for label, n in file2segcounts.get(f, {}).items():
                     total[label] = total.get(label, 0) + n
             return total
 
-        # Bedingung: Jede Klasse mindestens N Segmente in beiden Splits
-        ok = True
-        for part in ("train", "test"):
-            seg_counts = count_total_segments(split[part])
-            for label in all_labels:
-                if seg_counts.get(label, 0) < min_segments_per_class:
-                    ok = False
-                    break
-            if not ok:
+        train_counts = count(split["train"])
+        test_counts = count(split["test"])
+        total_counts = {k: train_counts.get(k, 0) + test_counts.get(k, 0) for k in all_labels}
+
+        max_imbalance = 0.0
+        for label in all_labels:
+            t = train_counts.get(label, 0)
+            test = test_counts.get(label, 0)
+            total = total_counts[label]
+            if total > 0:
+                pct_train = t / total
+                max_imbalance = max(max_imbalance, abs(pct_train - train_ratio))
+        return max_imbalance
+
+    # Split mit minimaler Imbalance
+    best_split = None
+    best_score = float("inf")
+    for _ in range(max_attempts):
+        shuffled = rng.permutation(parquet_files)
+        n_total = shuffled.size
+        n_train = int(n_total * train_ratio)
+
+        split = {
+            "train": list(shuffled[:n_train]),
+            "test": list(shuffled[n_train:]),
+        }
+
+        score = imbalance(split)
+        if score < best_score:
+            best_score = score
+            best_split = split
+            if best_score == 0:
                 break
 
-        if ok:
-            return split
+    if best_split is None:
+        print("❌ Kein gültiger Split gefunden.")
+        return {"train": [], "test": []}
 
-    print("⚠️  Keine vollständig segmentbasiert stratifizierte Aufteilung gefunden.")
-    return split
+    print(f"✅ Split gewählt mit maximaler Label-Imbalance von {best_score:.2%}")
+    return best_split
 
 def clear_directory(directory: Path, *, skip: set[str] | None = None) -> None:
     """Löscht alles im Verzeichnis (außer optional *skip*)."""
