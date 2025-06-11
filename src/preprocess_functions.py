@@ -100,9 +100,9 @@ def extract_all_nested_zips(zip_path: Path, extract_to: Path) -> None:
         # ZIP ist defekt oder kein ZIP → überspringen
         return
 
-    # 2) Alle entdeckten ZIP-Dateien in dieser Schicht einsammeln
+    # 2) Alle entdeckten ZIP-Dateien in dieser Schicht und Unterordnern einsammeln
     zips_to_process: list[Path] = []
-    for nested in extract_dir.glob("*.zip"):
+    for nested in extract_dir.rglob("*.zip"):
         zips_to_process.append(nested)
 
     # 3) Iteratives Abarbeiten (hier LIFO)
@@ -123,7 +123,7 @@ def extract_all_nested_zips(zip_path: Path, extract_to: Path) -> None:
         current_zip.unlink(missing_ok=True)
 
         # Suche im neu angelegten Ordner nach weiteren verschachtelten ZIPs
-        for deeper_zip in target_dir.glob("*.zip"):
+        for deeper_zip in target_dir.rglob("*.zip"):
             zips_to_process.append(deeper_zip)
 
 
