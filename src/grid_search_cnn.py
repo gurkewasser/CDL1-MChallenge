@@ -1,5 +1,6 @@
 import itertools
 import subprocess
+import os
 
 # Define grid search options
 batch_sizes = [8, 16, 32, 64]
@@ -20,6 +21,12 @@ for bs, lr, ch, ks in itertools.product(batch_sizes, learning_rates, cnn_channel
         "cnn_channels": ch,
         "kernel_size": ks,
     }
+
+    # Check if result file exists
+    result_file = os.path.join("logs", f"{run_name}.pth")
+    if os.path.exists(result_file):
+        print(f"Skipping {run_name} (result exists: {result_file})")
+        continue
 
     # Write config to YAML
     with open("src/config.yaml", "w") as f:
