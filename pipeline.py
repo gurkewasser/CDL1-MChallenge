@@ -92,35 +92,6 @@ def get_file_activities(pf: Path) -> set[str]:
         return set()
 
 
-def count_segments_by_activity(pf: Path) -> dict[str, int]:
-    """Zählt erwartete Segmentanzahl pro Aktivität in einer Datei."""
-    try:
-        raw = pd.read_parquet(pf)
-        proc = preprocess_dataframe(
-            raw,
-            time_col="time",
-            drop_initial=DROP_INITIAL,
-            drop_final=DROP_FINAL,
-            sampling_rate=SAMPLING_RATE,
-        )
-        segments = segment_dataframe(proc, SEGMENT_LENGTH, OVERLAP)
-        if not segments:
-            return {}
-        segments_proc = [
-            moving_average(seg, MA_WINDOW, SAMPLING_RATE)
-            for seg in segments
-        ]
-        labels = get_label_per_segment(
-            raw, segments_proc, time_col="time", label_col="activity"
-        )
-        counts = {}
-        for label in labels:
-            if label is not None:
-                counts[label] = counts.get(label, 0) + 1
-        return counts
-    except Exception:
-        return {}
-
 def create_stratified_split(
     parquet_files: list[Path],
     train_ratio: float,
