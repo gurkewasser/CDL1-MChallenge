@@ -1,0 +1,9 @@
+batch_size: 32
+cnn_channels: 16
+epochs: 10
+kernel_size: 3
+log_dir: ./logs
+lr: 1.0e-05
+project: cdl1
+run_name: cnn-bs-32-1e-05-cnn_c-16-k-3
+use_wandb: true
