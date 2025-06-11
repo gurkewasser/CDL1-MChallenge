@@ -420,16 +420,29 @@ def get_label_per_segment(
     if label_col not in raw_df.columns:
         raise ValueError(f"Spalte '{label_col}' nicht in raw_df vorhanden.")
 
-    label_series = raw_df.set_index(pd.to_datetime(raw_df[time_col], unit="ns"))[label_col]
+    # Get the most common label from the entire raw_df
+    most_common_label = raw_df[label_col].mode().iloc[0]
+    
+    # If we have a single label for the entire file, use that for all segments
+    if len(raw_df[label_col].unique()) == 1:
+        return [most_common_label] * len(segments)
+    
+    # Otherwise, try to get labels per segment
     labels: list = []
     for seg in segments:
         start_ts = seg.index.min()
         end_ts = seg.index.max()
-        seg_labels = label_series[start_ts:end_ts]
+        
+        # Get all labels that fall within this time window
+        mask = (raw_df[time_col] >= start_ts) & (raw_df[time_col] <= end_ts)
+        seg_labels = raw_df.loc[mask, label_col]
+        
         if not seg_labels.empty:
             labels.append(seg_labels.mode().iloc[0])
         else:
-            labels.append(None)
+            # If no labels found in this segment, use the most common label from the file
+            labels.append(most_common_label)
+    
     return labels
 
 
