@@ -14,41 +14,89 @@ with open("src/config_mlp.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # Set up paths
-import rootutils
-root = rootutils.setup_root(search_from=".", indicator=".git")
-data_train = np.load(root / "data/DL/TRAIN/dl_data_train.npz", allow_pickle=True)
-data_test = np.load(root / "data/DL/TEST/dl_data_test.npz", allow_pickle=True)
+project_root = Path(__file__).resolve().parent
+sys.path.append(str(project_root.parent))
 
-X = data_train["X"]
-y = data_train["y"]
+from methods import compute_normalization_params, apply_normalization
+
+train_dir = Path("data/processed/DL")
+train_files = sorted(train_dir.glob("dl_train*.npz"))
+train_arrays = [np.load(f, allow_pickle=True) for f in train_files]
+X = np.concatenate([arr["X"] for arr in train_arrays], axis=0)
+y = np.concatenate([arr["y"] for arr in train_arrays], axis=0)
+
+# Load validation set from dl_val.npz
+data_val = np.load("data/processed/DL/dl_val.npz")
+X_val = data_val["X"]
+y_val = data_val["y"]
+
+data_test = np.load("data/processed/DL/dl_test.npz")
 
 # Encode labels if necessary
 if y.dtype.kind in {'U', 'S', 'O'} or not np.issubdtype(y.dtype, np.integer):
     le = LabelEncoder()
     y = le.fit_transform(y)
+    y_val = le.transform(y_val)
 else:
     le = None
+    y_val = y_val.astype(np.int64)
 
-# Flatten the input data for MLP
-X = X.reshape(X.shape[0], -1)
+# Ensure shape (N, C, T)
+if X.shape[1] < X.shape[2]:
+    X = np.transpose(X, (0, 2, 1))
+if X_val.shape[1] < X_val.shape[2]:
+    X_val = np.transpose(X_val, (0, 2, 1))
+
 X = X.astype(np.float32)
 y = y.astype(np.int64)
+X_val = X_val.astype(np.float32)
+y_val = y_val.astype(np.int64)
+
+# Apply normalization based on training data
+stats = compute_normalization_params(pd.DataFrame(X.reshape(X.shape[0], -1)))
+X_flat = X.reshape(X.shape[0], -1)
+X_norm = apply_normalization(pd.DataFrame(X_flat), stats).values.reshape(X.shape)
+X = X_norm
+
+X_val_flat = X_val.reshape(X_val.shape[0], -1)
+X_val_norm = apply_normalization(pd.DataFrame(X_val_flat), stats).values.reshape(X_val.shape)
+X_val = X_val_norm
+
 num_classes = len(np.unique(y))
 
-# Dataset split
+# Dataset setup
 X_tensor = torch.from_numpy(X)
 y_tensor = torch.from_numpy(y)
-dataset = TensorDataset(X_tensor, y_tensor)
-n = len(dataset)
-n_train = int(0.8 * n)
-n_val = int(0.1 * n)
-n_test = n - n_train - n_val
-train_set, val_set, test_set = random_split(dataset, [n_train, n_val, n_test], generator=torch.Generator().manual_seed(42))
+train_set = TensorDataset(X_tensor, y_tensor)
 
-# Dataloaders
+X_val_tensor = torch.from_numpy(X_val)
+y_val_tensor = torch.from_numpy(y_val)
+val_set = TensorDataset(X_val_tensor, y_val_tensor)
+
 train_loader = DataLoader(train_set, batch_size=config["batch_size"], shuffle=True)
-val_loader = DataLoader(val_set, batch_size=config["batch_size"])
-test_loader = DataLoader(test_set, batch_size=config["batch_size"])
+val_loader = DataLoader(val_set, batch_size=config["batch_size"], shuffle=False)
+
+# Prepare test_loader
+X_test = data_test["X"]
+y_test = data_test["y"]
+
+if X_test.shape[1] < X_test.shape[2]:
+    X_test = np.transpose(X_test, (0, 2, 1))
+
+X_test = X_test.astype(np.float32)
+if le is not None:
+    y_test = le.transform(y_test)
+else:
+    y_test = y_test.astype(np.int64)
+
+X_test_flat = X_test.reshape(X_test.shape[0], -1)
+X_test_norm = apply_normalization(pd.DataFrame(X_test_flat), stats).values.reshape(X_test.shape)
+X_test = X_test_norm
+
+X_test_tensor = torch.from_numpy(X_test)
+y_test_tensor = torch.from_numpy(y_test)
+test_set = TensorDataset(X_test_tensor, y_test_tensor)
+test_loader = DataLoader(test_set, batch_size=config["batch_size"], shuffle=False)
 
 class BasicMLP(nn.Module):
     def __init__(self, input_size, hidden_sizes, num_classes, dropout=0.2):
