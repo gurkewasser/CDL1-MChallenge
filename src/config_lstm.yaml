@@ -1,5 +1,5 @@
 batch_size: 32
-bidirectional: true
+bidirectional: false
 checkpoint_dir: checkpoints/lstm
 dropout: 0.2
 early_stopping: true
@@ -17,7 +17,7 @@ model_type: basic
 patience: 15
 project: CDL1-LSTM
 restore_best_weights: true
-run_name: basic-bs32-lr0.001-hs128-nl1-do0.2-biTrue
+run_name: basic-bs32-lr0.001-hs128-nl1-do0.2-biFalse
 save_best_only: true
 save_frequency: 5
 train_val_split: 0.8
