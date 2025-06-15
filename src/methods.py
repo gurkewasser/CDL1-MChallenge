@@ -99,10 +99,17 @@ def apply_augmentation(df: pd.DataFrame, noise_level: float = 0.2) -> pd.DataFra
 def get_label_from_filename(filename: str) -> str:
     return Path(filename).stem.split("_")[0]
 
-def create_stratified_split(zip_files: list, test_size: float = 0.2, seed: int = 42):
+def create_stratified_split(
+    zip_files: list,
+    test_size: float = 0.2,
+    seed: int = 42,
+    create_val: bool = False,
+    val_size: float = 0.11,
+):
     """
     Erstellt einen stratified Split für eine Liste von ZIP-Dateipfaden.
     zip_files: Liste von Pfaden (Path-Objekte oder Strings)
+    Wenn create_val=True, wird zusätzlich ein Validierungsset erzeugt.
     """
     if not zip_files:
         print("⚠️ Keine ZIP-Dateien gefunden. Rückgabe: leere Listen.")
@@ -126,14 +133,37 @@ def create_stratified_split(zip_files: list, test_size: float = 0.2, seed: int =
 
     try:
         from sklearn.model_selection import train_test_split
-        train_df, test_df = train_test_split(
-            data, test_size=test_size, stratify=data["label"], random_state=seed
-        )
+        if create_val:
+            # Erst Testset abspalten
+            trainval_df, test_df = train_test_split(
+                data, test_size=test_size, stratify=data["label"], random_state=seed
+            )
+            # Dann Valset aus dem Rest abspalten
+            # val_size_relativ = Anteil von val an trainval
+            if len(trainval_df) == 0:
+                print("⚠️ Kein Training/Val-Set nach erstem Split. Rückgabe: leere Listen.")
+                return [], [], []
+            val_size_rel = val_size / (1 - test_size)
+            if val_size_rel >= 1.0:
+                print("⚠️ val_size zu groß im Verhältnis zu trainval. Rückgabe: leere Listen.")
+                return [], [], []
+            train_df, val_df = train_test_split(
+                trainval_df, test_size=val_size_rel, stratify=trainval_df["label"], random_state=seed
+            )
+            return (
+                train_df["path"].tolist(),
+                val_df["path"].tolist(),
+                test_df["path"].tolist()
+            )
+        else:
+            train_df, test_df = train_test_split(
+                data, test_size=test_size, stratify=data["label"], random_state=seed
+            )
+            return train_df["path"].tolist(), test_df["path"].tolist()
     except Exception as e:
         print(f"⚠️ Fehler beim Stratified Split: {e}. Rückgabe: leere Listen.")
         return [], []
 
-    return train_df["path"].tolist(), test_df["path"].tolist()
 
 def standardize_coordinates(df: pd.DataFrame, metadata_path: Path) -> pd.DataFrame:
     """
