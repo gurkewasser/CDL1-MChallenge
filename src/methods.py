@@ -295,7 +295,6 @@ def extract_features_from_segments(segments: list[dict], feature_names: list[str
             features[f"{base}_std"] = np.std(col)
             features[f"{base}_min"] = np.min(col)
             features[f"{base}_max"] = np.max(col)
-            features[f"{base}_median"] = np.median(col)
 
         features["label"] = label
         feature_list.append(features)
