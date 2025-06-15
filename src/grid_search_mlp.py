@@ -9,14 +9,14 @@ except ImportError:
     tqdm = lambda x, **kwargs: x  # fallback: no progress bar
 
 # Define grid search options
-batch_sizes = [16, 32, 64]
-learning_rates = [1e-3, 5e-4, 1e-4]
+batch_sizes = [32, 64]
+learning_rates = [1e-3, 1e-4]
 hidden_sizes_combinations = [
     [256, 128, 64],  # Shallow network
     [512, 256, 128],  # Medium network
     [1024, 512, 256],  # Deep network
 ]
-dropouts = [0.2, 0.3, 0.4]
+dropouts = [0.2, 0.3]
 model_types = ["basic", "advanced"]
 
 # Prepare all combinations in advance for progress bar
