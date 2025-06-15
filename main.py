@@ -68,10 +68,13 @@ def run_preprocessing_pipeline(
         and zipfile.is_zipfile(str(f))
     ]
 
-    if val_set:
-        train_zips, val_zips,  test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED, create_val=val_set)
-    else:
-        train_zips, test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED)
+    # --- SPLIT FOR NDL (features) ---
+    # Only train/test for NDL features
+    ndl_train_zips, ndl_test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED)
+
+    # --- SPLIT FOR DL (.npz) ---
+    # train/val/test for DL .npz
+    dl_train_zips, dl_val_zips, dl_test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED, create_val=val_set)
 
     def process_and_extract(zip_files, augment=False, orientation_method=None):
         all_segments = []
@@ -97,39 +100,43 @@ def run_preprocessing_pipeline(
 
         return all_segments
 
-    def export(segments, suffix):
+    def export_features(segments, suffix):
         (output_dir / "NDL").mkdir(parents=True, exist_ok=True)
-        (output_dir / "DL").mkdir(parents=True, exist_ok=True)
-
         # Feature-Namen aus dem ersten Segment holen
         feature_names = segments[0]["feature_names"] if segments else None
-
         # Klassische ML-Features mit aussagekräftigen Namen
         df_feat = extract_features_from_segments(segments, feature_names=feature_names)
         df_feat.to_csv(output_dir / "NDL" / f"features_{suffix}.csv", index=False)
 
-        # Deep Learning Daten
+    def export_dl_npz(segments, suffix):
+        (output_dir / "DL").mkdir(parents=True, exist_ok=True)
         X = np.array([s["data"] for s in segments])
         y = np.array([s["label"] for s in segments])
         np.savez_compressed(output_dir / "DL" / f"dl_{suffix}.npz", X=X, y=y)
 
     try:
-        # 1. Normal
-        seg_train = process_and_extract(train_zips)
-        export(seg_train, "train")
-        seg_test = process_and_extract(test_zips)
-        export(seg_test, "test")
-        seg_val = process_and_extract(val_zips)
-        export(seg_val, "val")
+        # --- NDL FEATURES EXPORT (train/test only) ---
+        seg_ndl_train = process_and_extract(ndl_train_zips)
+        export_features(seg_ndl_train, "train")
+        seg_ndl_test = process_and_extract(ndl_test_zips)
+        export_features(seg_ndl_test, "test")
 
-        # 2. Mit Rauschaugmentation
-        seg_train_aug = process_and_extract(train_zips, augment=True)
-        export(seg_train_aug, "train_aug")
+        # --- DL .npz EXPORT (train/val/test) ---
+        seg_dl_train = process_and_extract(dl_train_zips)
+        export_dl_npz(seg_dl_train, "train")
+        seg_dl_test = process_and_extract(dl_test_zips)
+        export_dl_npz(seg_dl_test, "test")
+        seg_dl_val = process_and_extract(dl_val_zips)
+        export_dl_npz(seg_dl_val, "val")
 
-        # 3. Mit verschiedenen Orientation-Augs
+        # 2. Mit Rauschaugmentation (DL train set only)
+        seg_dl_train_aug = process_and_extract(dl_train_zips, augment=True)
+        export_dl_npz(seg_dl_train_aug, "train_aug")
+
+        # 3. Mit verschiedenen Orientation-Augs (DL train set only)
         for method in ["flip_roll", "invert_pitch", "rotate_yaw_180"]:
-            seg_aug = process_and_extract(train_zips, orientation_method=method)
-            export(seg_aug, f"train_{method}")
+            seg_aug = process_and_extract(dl_train_zips, orientation_method=method)
+            export_dl_npz(seg_aug, f"train_{method}")
     finally:
         # Clean up unzipped_raw if it was created
         if unzipped_raw_created and unzipped_raw_path.exists():
