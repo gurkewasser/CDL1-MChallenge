@@ -1,10 +1,10 @@
 batch_size: 128
 cnn_channels: 256
 early_stopping_min_delta: 0.001
-early_stopping_patience: 5
+early_stopping_patience: 10
 epochs: 100
 kernel_size: 7
 log_dir: ./logs
 lr: 0.001
 model_type: DeepCNN
-run_name: deepcnn-bs-128-0.001-cnn_c-256-k-7_norm
+run_name: deepcnn-bs-128-cnn_c-256-k-7
