@@ -308,6 +308,7 @@ def preprocess_dataframe(
     2. Setze den Zeitstempel als Index und sortiere.
     3. Entferne die ersten/letzten Sekunden (Randeffekte).
     4. Resample auf 'sampling_rate' (Hz) mit Mittelwert + linearer Interpolation.
+    Hinweis: Keine Normalisierung mehr an dieser Stelle.
     """
     df = df.copy()
     if time_col not in df.columns:
@@ -341,6 +342,31 @@ def preprocess_dataframe(
         raise ValueError("DataFrame ist nach Resampling leer.")
 
     return df_resampled
+
+
+# ---------------------------------------------------------
+# Neue Funktionen: Normalisierungs-Parameter berechnen und anwenden
+# ---------------------------------------------------------
+def compute_normalization_params(df: pd.DataFrame) -> dict[str, tuple[float, float]]:
+    """
+    Berechnet Mittelwert und Standardabweichung für alle numerischen Spalten.
+    Gibt ein Dictionary {spaltenname: (mean, std)} zurück.
+    """
+    stats = {}
+    for col in df.select_dtypes(include="number").columns:
+        stats[col] = (df[col].mean(), df[col].std())
+    return stats
+
+
+def apply_normalization(df: pd.DataFrame, stats: dict[str, tuple[float, float]]) -> pd.DataFrame:
+    """
+    Wendet Normalisierung auf ein DataFrame an, basierend auf den übergebenen stats.
+    """
+    df = df.copy()
+    for col, (mean, std) in stats.items():
+        if col in df.columns:
+            df[col] = (df[col] - mean) / std
+    return df
 
 
 def segment_dataframe(
