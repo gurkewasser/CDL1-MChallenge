@@ -172,8 +172,8 @@ def standardize_coordinates(df: pd.DataFrame, metadata_path: Path) -> pd.DataFra
 
 def segment_dataframe(df: pd.DataFrame, window_size: int = 250, stride: int = 125) -> list[dict]:
     """
-    Schneidet die Zeitreihe in überlappende Segmente (z. B. 5s bei 50Hz = 250 Samples).
-    Gibt Liste von Dicts mit {'data': ndarray, 'label':$ str}.
+    Schneidet die Zeitreihe in überlappende Segmente (z. B. 5s bei 50Hz = 250 Samples).
+    Gibt Liste von Dicts mit {'data': ndarray, 'label': str, 'feature_names': list}.
     """
     segments = []
 
@@ -191,7 +191,12 @@ def segment_dataframe(df: pd.DataFrame, window_size: int = 250, stride: int = 12
 
         segment_data = window[numeric_cols].to_numpy()
         label = window["label"].mode()[0]  # häufigstes Label im Segment
-        segments.append({"data": segment_data, "label": label})
+        
+        segments.append({
+            "data": segment_data, 
+            "label": label,
+            "feature_names": list(numeric_cols) 
+        })
 
     return segments
 
@@ -291,8 +296,6 @@ def extract_features_from_segments(segments: list[dict], feature_names: list[str
             features[f"{base}_min"] = np.min(col)
             features[f"{base}_max"] = np.max(col)
             features[f"{base}_median"] = np.median(col)
-            features[f"{base}_iqr"] = np.percentile(col, 75) - np.percentile(col, 25)
-            features[f"{base}_energy"] = np.sum(col**2) / len(col)
 
         features["label"] = label
         feature_list.append(features)

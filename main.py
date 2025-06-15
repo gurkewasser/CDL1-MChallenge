@@ -11,6 +11,8 @@ import shutil
 project_root = Path(__file__).resolve().parent
 sys.path.append(str(project_root))
 
+print(f"Project root: {project_root}")
+
 TEST_SIZE = 0.1
 SEED = 2277
 
@@ -64,6 +66,7 @@ def run_preprocessing_pipeline(
         and not f.name.startswith("._")
         and zipfile.is_zipfile(str(f))
     ]
+
     train_zips, test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED)
 
     def process_and_extract(zip_files, augment=False, orientation_method=None):
@@ -94,8 +97,11 @@ def run_preprocessing_pipeline(
         (output_dir / "NDL").mkdir(parents=True, exist_ok=True)
         (output_dir / "DL").mkdir(parents=True, exist_ok=True)
 
-        # Klassische ML-Features
-        df_feat = extract_features_from_segments(segments)
+        # Feature-Namen aus dem ersten Segment holen
+        feature_names = segments[0]["feature_names"] if segments else None
+
+        # Klassische ML-Features mit aussagekräftigen Namen
+        df_feat = extract_features_from_segments(segments, feature_names=feature_names)
         df_feat.to_csv(output_dir / "NDL" / f"features_{suffix}.csv", index=False)
 
         # Deep Learning Daten

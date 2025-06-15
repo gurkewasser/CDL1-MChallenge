@@ -194,38 +194,7 @@ def plot_performance_metrics(accuracy, precision, recall, f1, dataset_name: str)
     plt.show()
 
 
-def plot_learning_curve(estimator, X, y, cv, scoring, title):
-    train_sizes, train_scores, cv_scores = learning_curve(
-        estimator=estimator,
-        X=X,
-        y=y,
-        cv=cv,
-        scoring=scoring,
-        train_sizes=np.linspace(0.1, 1.0, 5),
-        n_jobs=-1
-    )
 
-    train_mean = np.mean(train_scores, axis=1)
-    train_std = np.std(train_scores, axis=1)
-    cv_mean = np.mean(cv_scores, axis=1)
-    cv_std = np.std(cv_scores, axis=1)
-
-    plt.figure()
-    plt.title(title)
-    plt.xlabel("Anzahl Trainingsbeispiele")
-    plt.ylabel(scoring.capitalize())
-    plt.grid(alpha=0.3)
-
-    # Unsicherheitsbereiche (±1 Standardabweichung)
-    plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.1)
-    plt.fill_between(train_sizes, cv_mean - cv_std, cv_mean + cv_std, alpha=0.1)
-
-    # Kurven für Training und CV
-    plt.plot(train_sizes, train_mean, 'o-', label="Training " + scoring)
-    plt.plot(train_sizes, cv_mean, 'o-', label="CV " + scoring)
-
-    plt.legend(loc="best")
-    plt.show()
 
 
 def plot_model_metrics(models_to_plot, all_data, max_models=None, figsize_per_model=(14, 4), show_grid=True):
