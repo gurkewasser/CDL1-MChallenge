@@ -3,24 +3,36 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.preprocessing import LabelEncoder
-import wandb
 from pathlib import Path
+import pandas as pd
+import sys
+from tqdm import trange
+#from preprocess_functions import compute_normalization_params, apply_normalization
+
+# --- wandb logging ---
+import wandb
 
 # Load configuration
 with open("src/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # Set up paths
-import rootutils
-root = rootutils.setup_root(search_from=".", indicator=".git")
-data_train = np.load(root / "data/DL/TRAIN/dl_data_train.npz", allow_pickle=True)
-data_test = np.load(root / "data/DL/TEST/dl_data_test.npz", allow_pickle=True)
+project_root = Path(__file__).resolve().parent
+sys.path.append(str(project_root.parent))
 
-X = data_train["X"]
-y = data_train["y"]
+from methods import compute_normalization_params, apply_normalization
+
+
+train_dir = Path("testing/data/processed/DL")
+train_files = sorted(train_dir.glob("dl_train*.npz"))
+train_arrays = [np.load(f, allow_pickle=True) for f in train_files]
+X = np.concatenate([arr["X"] for arr in train_arrays], axis=0)
+y = np.concatenate([arr["y"] for arr in train_arrays], axis=0)
+
+data_test = np.load("testing/data/processed/DL/dl_test.npz")
 
 # Encode labels if necessary
 if y.dtype.kind in {'U', 'S', 'O'} or not np.issubdtype(y.dtype, np.integer):
@@ -35,22 +47,49 @@ if X.shape[1] < X.shape[2]:
 
 X = X.astype(np.float32)
 y = y.astype(np.int64)
+
+# Apply normalization based on training data
+stats = compute_normalization_params(pd.DataFrame(X.reshape(X.shape[0], -1)))
+X_flat = X.reshape(X.shape[0], -1)
+X_norm = apply_normalization(pd.DataFrame(X_flat), stats).values.reshape(X.shape)
+X = X_norm
+
 num_classes = len(np.unique(y))
 
-# Dataset split
+# Dataset setup
 X_tensor = torch.from_numpy(X)
 y_tensor = torch.from_numpy(y)
-dataset = TensorDataset(X_tensor, y_tensor)
-n = len(dataset)
-n_train = int(0.8 * n)
-n_val = int(0.1 * n)
-n_test = n - n_train - n_val
-train_set, val_set, test_set = random_split(dataset, [n_train, n_val, n_test], generator=torch.Generator().manual_seed(42))
+train_set = TensorDataset(X_tensor, y_tensor)
+# Split train set into train and val (e.g., 90/10)
+val_fraction = 0.1
+val_size = int(len(train_set) * val_fraction)
+train_size = len(train_set) - val_size
+train_subset, val_subset = torch.utils.data.random_split(train_set, [train_size, val_size])
 
-# Dataloaders
-train_loader = DataLoader(train_set, batch_size=config["batch_size"], shuffle=True)
-val_loader = DataLoader(val_set, batch_size=config["batch_size"])
-test_loader = DataLoader(test_set, batch_size=config["batch_size"])
+train_loader = DataLoader(train_subset, batch_size=config["batch_size"], shuffle=True)
+val_loader = DataLoader(val_subset, batch_size=config["batch_size"], shuffle=False)
+
+# Prepare test_loader
+X_test = data_test["X"]
+y_test = data_test["y"]
+
+if X_test.shape[1] < X_test.shape[2]:
+    X_test = np.transpose(X_test, (0, 2, 1))
+
+X_test = X_test.astype(np.float32)
+if le is not None:
+    y_test = le.transform(y_test)
+else:
+    y_test = y_test.astype(np.int64)
+
+X_test_flat = X_test.reshape(X_test.shape[0], -1)
+X_test_norm = apply_normalization(pd.DataFrame(X_test_flat), stats).values.reshape(X_test.shape)
+X_test = X_test_norm
+
+X_test_tensor = torch.from_numpy(X_test)
+y_test_tensor = torch.from_numpy(y_test)
+test_set = TensorDataset(X_test_tensor, y_test_tensor)
+test_loader = DataLoader(test_set, batch_size=config["batch_size"], shuffle=False)
 
 # CNN Modell
 class CNN(nn.Module):
@@ -66,10 +105,122 @@ class CNN(nn.Module):
         x = self.fc(x)
         return x
 
-# Training
+class ImprovedCNN(nn.Module):
+    def __init__(self, in_channels, num_classes, hidden_channels=64, kernel_size=5):
+        super().__init__()
+        self.conv_block1 = nn.Sequential(
+            nn.Conv1d(in_channels, hidden_channels, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.BatchNorm1d(hidden_channels),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2)
+        )
+        self.conv_block2 = nn.Sequential(
+            nn.Conv1d(hidden_channels, hidden_channels * 2, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.BatchNorm1d(hidden_channels * 2),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1)
+        )
+        self.dropout = nn.Dropout(0.3)
+        self.fc = nn.Linear(hidden_channels * 2, num_classes)
+
+    def forward(self, x):
+        x = self.conv_block1(x)
+        x = self.conv_block2(x).squeeze(-1)
+        x = self.dropout(x)
+        x = self.fc(x)
+        return x
+    
+class DeepCNN(nn.Module):
+    def __init__(self, in_channels, num_classes, hidden_channels=64, kernel_size=5):
+        super().__init__()
+        self.block1 = nn.Sequential(
+            nn.Conv1d(in_channels, hidden_channels, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.BatchNorm1d(hidden_channels),
+            nn.ReLU(),
+            nn.MaxPool1d(2)
+        )
+        self.block2 = nn.Sequential(
+            nn.Conv1d(hidden_channels, hidden_channels * 2, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.BatchNorm1d(hidden_channels * 2),
+            nn.ReLU(),
+            nn.MaxPool1d(2)
+        )
+        self.block3 = nn.Sequential(
+            nn.Conv1d(hidden_channels * 2, hidden_channels * 4, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.BatchNorm1d(hidden_channels * 4),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1)
+        )
+        self.shortcut = nn.Sequential(
+            nn.Conv1d(in_channels, hidden_channels * 4, kernel_size=1),
+            nn.AdaptiveAvgPool1d(1)
+        )
+        self.dropout = nn.Dropout(0.4)
+        self.fc = nn.Linear(hidden_channels * 4, num_classes)
+
+    def forward(self, x):
+        residual = self.shortcut(x).squeeze(-1)
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x).squeeze(-1)
+        x = x + residual  # Residual connection
+        x = self.dropout(x)
+        x = self.fc(x)
+        return x
+
+class EarlyStopping:
+    def __init__(self, patience=7, min_delta=0, mode='min'):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.counter = 0
+        self.best_value = None
+        self.early_stop = False
+        self.best_epoch = 0
+
+    def __call__(self, epoch, value, model, optimizer):
+        if self.best_value is None:
+            self.best_value = value
+            self.best_epoch = epoch
+            return False
+
+        if self.mode == 'min':
+            if value < self.best_value - self.min_delta:
+                self.best_value = value
+                self.counter = 0
+                self.best_epoch = epoch
+                return False
+        else:
+            if value > self.best_value + self.min_delta:
+                self.best_value = value
+                self.counter = 0
+                self.best_epoch = epoch
+                return False
+
+        self.counter += 1
+        if self.counter >= self.patience:
+            return True
+        return False
+
+
 def train_model(model, train_loader, val_loader, criterion, optimizer, device):
     history = {"epoch": [], "train_loss": [], "val_loss": [], "val_acc": []}
-    for epoch in range(config["epochs"]):
+    early_stopping = EarlyStopping(
+        patience=config["early_stopping_patience"],
+        min_delta=config["early_stopping_min_delta"],
+        mode='min'
+    )
+    
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.5,
+        patience=3,
+        min_lr=1e-6
+    )
+
+    epochs = config["epochs"]
+    for epoch in range(epochs):
         model.train()
         total_loss = 0
         for xb, yb in train_loader:
@@ -82,35 +233,57 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device):
             total_loss += loss.item() * xb.size(0)
         train_loss = total_loss / len(train_loader.dataset)
 
-        # Validation
-        model.eval()
-        val_loss = 0
-        preds, labels = [], []
-        with torch.no_grad():
-            for xb, yb in val_loader:
-                xb, yb = xb.to(device), yb.to(device)
-                out = model(xb)
-                loss = criterion(out, yb)
-                val_loss += loss.item() * xb.size(0)
-                preds.append(out.argmax(dim=1).cpu().numpy())
-                labels.append(yb.cpu().numpy())
+        val_loss = None
+        val_acc = None
+        if val_loader is not None:
+            # Validation
+            model.eval()
+            val_loss = 0
+            preds, labels = [], []
+            with torch.no_grad():
+                for xb, yb in val_loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    out = model(xb)
+                    loss = criterion(out, yb)
+                    val_loss += loss.item() * xb.size(0)
+                    preds.append(out.argmax(dim=1).cpu().numpy())
+                    labels.append(yb.cpu().numpy())
 
-        val_loss /= len(val_loader.dataset)
-        val_acc = accuracy_score(np.concatenate(labels), np.concatenate(preds))
+            val_loss /= len(val_loader.dataset)
+            val_acc = accuracy_score(np.concatenate(labels), np.concatenate(preds))
 
-        print(f"[Epoch {epoch+1}] Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
+            # Update learning rate
+            scheduler.step(val_loss)
+        else:
+            # No validation loader, step scheduler with train loss
+            scheduler.step(train_loss)
+
+        # wandb logging
+        log_dict = {
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "lr": optimizer.param_groups[0]['lr']
+        }
+        if val_loss is not None:
+            log_dict["val_loss"] = val_loss
+        if val_acc is not None:
+            log_dict["val_acc"] = val_acc
+
+        wandb.log(log_dict)
+
         history["epoch"].append(epoch + 1)
         history["train_loss"].append(train_loss)
-        history["val_loss"].append(val_loss)
-        history["val_acc"].append(val_acc)
+        if val_loss is not None:
+            history["val_loss"].append(val_loss)
+        if val_acc is not None:
+            history["val_acc"].append(val_acc)
 
-        if config["use_wandb"]:
-            wandb.log({
-                "epoch": epoch + 1,
-                "train_loss": train_loss,
-                "val_loss": val_loss,
-                "val_acc": val_acc,
-            })
+        # Early stopping check
+        if val_loss is not None and early_stopping(epoch, val_loss, model, optimizer):
+            print(f"Early stopping triggered at epoch {epoch+1}")
+            print(f"Best epoch was {early_stopping.best_epoch+1} with validation loss {early_stopping.best_value:.4f}")
+            break
+
     return model, history
 
 # Evaluation
@@ -127,7 +300,7 @@ def evaluate(model, test_loader, device):
     y_pred = np.concatenate(all_preds)
     acc = accuracy_score(y_true, y_pred)
     prec, rec, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="weighted")
-    print(f"\nTest Accuracy: {acc:.4f}, Precision: {prec:.4f}, Recall: {rec:.4f}, F1: {f1:.4f}")
+    #print(f"\nTest Accuracy: {acc:.4f}, Precision: {prec:.4f}, Recall: {rec:.4f}, F1: {f1:.4f}")
     return acc, prec, rec, f1, y_true, y_pred
 
 # Save history
@@ -143,25 +316,55 @@ def save_history(history, config, test_metrics):
     with open(history_path, "w") as f:
         json.dump(history, f, indent=4)
 
-# Main Run
-if config["use_wandb"]:
-    wandb.init(project=config["project"], name=config["run_name"], config=config)
+    # wandb: log test metrics as summary
+    wandb.summary["test_accuracy"] = test_metrics[0]
+    wandb.summary["test_precision"] = test_metrics[1]
+    wandb.summary["test_recall"] = test_metrics[2]
+    wandb.summary["test_f1"] = test_metrics[3]
 
+# Main Run
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CNN(in_channels=X.shape[1], out_channels=config["cnn_channels"], kernel_size=config["kernel_size"], num_classes=num_classes).to(device)
+
+# wandb: initialize run
+wandb.init(
+    project=config.get("wandb_project", "cnn_gridsearch"),
+    name=config.get("run_name", None),
+    config=config,
+    dir=config.get("log_dir", "./logs"),
+    reinit=True,
+)
+
+# Select model based on config
+if config["model_type"] == "CNN":
+    model = CNN(in_channels=X.shape[1], out_channels=config["cnn_channels"], 
+                kernel_size=config["kernel_size"], num_classes=num_classes).to(device)
+elif config["model_type"] == "ImprovedCNN":
+    model = ImprovedCNN(in_channels=X.shape[1], num_classes=num_classes, 
+                       hidden_channels=config["cnn_channels"], 
+                       kernel_size=config["kernel_size"]).to(device)
+else:  # DeepCNN
+    model = DeepCNN(in_channels=X.shape[1], num_classes=num_classes, 
+                   hidden_channels=config["cnn_channels"], 
+                   kernel_size=config["kernel_size"]).to(device)
+
 optimizer = optim.Adam(model.parameters(), lr=config["lr"])
 criterion = nn.CrossEntropyLoss()
 
 model, history = train_model(model, train_loader, val_loader, criterion, optimizer, device)
-acc, prec, rec, f1, y_true, y_pred = evaluate(model, test_loader, device)
 
-if config["use_wandb"]:
+# Evaluate only if test_loader has data
+if len(test_loader.dataset) > 0:
+    acc, prec, rec, f1, y_true, y_pred = evaluate(model, test_loader, device)
     wandb.log({
         "test_accuracy": acc,
         "test_precision": prec,
         "test_recall": rec,
         "test_f1": f1,
+        "epoch": history["epoch"][-1] if history["epoch"] else config["epochs"]
     })
-    wandb.finish()
+    save_history(history, config, test_metrics=(acc, prec, rec, f1))
+else:
+    print("⚠️ Kein Test-Set vorhanden – Evaluation wird übersprungen.")
+    save_history(history, config, test_metrics=(None, None, None, None))
 
-save_history(history, config, test_metrics=(acc, prec, rec, f1))
+wandb.finish()
