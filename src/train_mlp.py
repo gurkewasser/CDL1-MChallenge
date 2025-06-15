@@ -8,6 +8,8 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.preprocessing import LabelEncoder
 import wandb
 from pathlib import Path
+import sys
+import pandas as pd
 
 # Load configuration
 with open("src/config_mlp.yaml", "r") as f:
@@ -120,6 +122,7 @@ class BasicMLP(nn.Module):
         self.mlp = nn.Sequential(*layers)
 
     def forward(self, x):
+        x = x.view(x.size(0), -1)
         return self.mlp(x)
 
 class AdvancedMLP(nn.Module):
@@ -148,6 +151,7 @@ class AdvancedMLP(nn.Module):
         )
 
     def forward(self, x):
+        x = x.view(x.size(0), -1)
         x = self.feature_extractor(x)
         for block in self.residual_blocks:
             x = block(x)
@@ -378,16 +382,18 @@ if config["use_wandb"]:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Choose model architecture
+input_size = X.shape[1] * X.shape[2]
+
 if config.get("model_type", "basic") == "advanced":
     model = AdvancedMLP(
-        input_size=X.shape[1],
+        input_size=input_size,
         hidden_sizes=config["mlp_hidden_sizes"],
         num_classes=num_classes,
         dropout=config.get("dropout", 0.2)
     ).to(device)
 else:
     model = BasicMLP(
-        input_size=X.shape[1],
+        input_size=input_size,
         hidden_sizes=config["mlp_hidden_sizes"],
         num_classes=num_classes,
         dropout=config.get("dropout", 0.2)
