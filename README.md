@@ -53,8 +53,7 @@ Die Datei `main.py` ist die Pipeline die alle Daten vorbereitet und bereicht mac
 
 Die Parameter für die Modelle werden in YAML-Dateien im `src/` Verzeichnis definiert:
 
-- `config.yaml` (allgemein)
-- `config_cnn.yaml`, `config_lstm.yaml`, `config_mlp.yaml`
+- `config.yaml`, `config_lstm.yaml`, `config_mlp.yaml`
 
 ## Modelltraining
 
