@@ -35,35 +35,35 @@ CDL1-MChallenge
     └── utils.py
 ```
 
-## 🔗 Datendownload
+## Datendownload
 
 Die Trainingsdaten können unter folgendem Link heruntergeladen werden:
 
 [Download via SWITCH Filesender](https://filesender.switch.ch/filesender2/?s=download&token=8ae33f29-bf81-4ccf-988a-d7f7b8bc010c)
 
-## 🚀 Einstiegspunkt
+## Einstiegspunkt
 
-Die Datei `main.py` dient als zentraler Einstiegspunkt zur Ausführung des gesamten Workflows. Alternativ können einzelne Jupyter Notebooks für explorative Analysen verwendet werden:
+Die Datei `main.py` ist die Pipeline die alle Daten vorbereitet und bereicht macht für das trainieren der Klassischen und Deep Learning Modelle.
 
-- `Overview_Challenge.ipynb`: Überblick über die Challenge und die verwendeten Daten
+- `Overview_Challenge.ipynb`: Überblick über die Challenge und die verwendeten Daten und Vorbereitung der Daten
 - `non_deep_learning_models.ipynb`: Klassische Modelle
 - `deep_learning_models.ipynb`: CNN, LSTM, MLP
 
-## ⚙️ Konfiguration
+## Konfiguration
 
 Die Parameter für die Modelle werden in YAML-Dateien im `src/` Verzeichnis definiert:
 
 - `config.yaml` (allgemein)
 - `config_cnn.yaml`, `config_lstm.yaml`, `config_mlp.yaml`
 
-## 🧪 Modelltraining
+## Modelltraining
 
 In `src/` befinden sich Trainings- und GridSearch-Skripte:
 
 - `train_cnn.py`, `train_lstm.py`, `train_mlp.py`
 - `grid_search_cnn.py`, `grid_search_lstm.py`, `grid_search_mlp.py`
 
-## 🧰 Abhängigkeiten
+## Abhängigkeiten
 
 Alle nötigen Python-Pakete sind in der Datei `requirements.txt` aufgeführt. Installation via:
 
@@ -71,6 +71,6 @@ Alle nötigen Python-Pakete sind in der Datei `requirements.txt` aufgeführt. In
 pip install -r requirements.txt
 ```
 
-## 🖼️ Visualisierungen
+## Visualisierungen
 
 Im Ordner `images/` befinden sich Visualisierungen zur Datenverarbeitung und zum Modellvergleich.
