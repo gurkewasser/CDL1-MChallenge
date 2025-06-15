@@ -245,3 +245,163 @@ def plot_model_metrics(models_to_plot, all_data, max_models=None, figsize_per_mo
     plt.tight_layout()
     plt.show()
 
+import sys
+import os
+import pandas as pd
+import rootutils
+import numpy as np
+from pathlib import Path
+
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import label_binarize
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, confusion_matrix, roc_curve, auc
+)
+from sklearn.model_selection import learning_curve, StratifiedKFold
+
+# Seed für Reproduzierbarkeit
+np.random.seed(123)
+
+# Root Setup
+root = rootutils.setup_root(search_from=".", indicator=".git")
+ndl_path = Path("data/processed/NDL")
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..', 'src')))
+
+# Modellvergleichs-Tracker initialisieren
+model_metrics = []
+
+# Funktion zur Speicherung von Metriken
+def store_model_metrics(name, train_acc, train_prec, train_rec, train_f1, test_acc, test_prec, test_rec, test_f1):
+    model_metrics.append({
+        'Modell': name,
+        'Train Accuracy': f"{train_acc:.4f}",
+        'Train Precision': f"{train_prec:.4f}",
+        'Train Recall': f"{train_rec:.4f}",
+        'Train F1-Score': f"{train_f1:.4f}",
+        'Test Accuracy': f"{test_acc:.4f}",
+        'Test Precision': f"{test_prec:.4f}",
+        'Test Recall': f"{test_rec:.4f}",
+        'Test F1-Score': f"{test_f1:.4f}"
+    })
+
+# Funktion zum Plotten der Lernkurve
+def plot_learning_curve(estimator, X, y, scoring, name="Modell", cv=5):
+    cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
+
+    train_sizes, train_scores, cv_scores = learning_curve(
+        estimator=estimator,
+        X=X,
+        y=y,
+        cv=cv_strategy,
+        scoring=scoring,
+        train_sizes=np.linspace(0.1, 1.0, 5),
+        n_jobs=-1
+    )
+
+    train_mean = np.mean(train_scores, axis=1)
+    train_std = np.std(train_scores, axis=1)
+    cv_mean = np.mean(cv_scores, axis=1)
+    cv_std = np.std(cv_scores, axis=1)
+
+    plt.figure()
+    plt.title(f"Lernkurve – {name}")
+    plt.xlabel("Anzahl Trainingsbeispiele")
+    plt.ylabel(scoring.capitalize())
+    plt.grid(alpha=0.3)
+
+    plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.1)
+    plt.fill_between(train_sizes, cv_mean - cv_std, cv_mean + cv_std, alpha=0.1)
+
+    plt.plot(train_sizes, train_mean, 'o-', label="Train")
+    plt.plot(train_sizes, cv_mean, 'o-', label="CV")
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.show()
+
+# Konstante Schwellen für Overfitting-Check (ΔTrain-Test > 5 % ⇒ Warnung)
+OVERFIT_THRESH_ACC = 0.05
+OVERFIT_THRESH_F1  = 0.05
+
+# Haupt-Evaluator mit Overfitting-Diagnose
+def evaluate_model(name, best_model, X_train, y_train, X_test, y_test):
+    # 1) Vorhersagen holen
+    y_tr_pred = best_model.predict(X_train)
+    y_te_pred = best_model.predict(X_test)
+
+    y_tr_true, y_te_true = y_train, y_test
+    if isinstance(y_train[0], (int, np.integer)) and hasattr(evaluate_model, 'label_encoder'):
+        le = evaluate_model.label_encoder
+        y_tr_true = le.inverse_transform(y_train)
+        y_te_true = le.inverse_transform(y_test)
+        y_tr_pred = le.inverse_transform(y_tr_pred)
+        y_te_pred = le.inverse_transform(y_te_pred)
+
+    lbls = sorted(set(y_te_true))
+
+    # 2) Kennzahlen Train
+    acc_tr = accuracy_score(y_tr_true, y_tr_pred)
+    f1_tr  = f1_score(y_tr_true, y_tr_pred, average='macro', zero_division=0)
+    prec_tr= precision_score(y_tr_true, y_tr_pred, average='macro', zero_division=0)
+    rec_tr = recall_score(y_tr_true, y_tr_pred, average='macro', zero_division=0)
+
+    print("\n— Training —")
+    print(f"Acc {acc_tr:.4f} | Prec {prec_tr:.4f} | Rec {rec_tr:.4f} | F1 {f1_tr:.4f}")
+
+    sns.heatmap(confusion_matrix(y_tr_true, y_tr_pred, labels=lbls),
+                annot=True, cmap='Blues', fmt='d',
+                xticklabels=lbls, yticklabels=lbls)
+    plt.title(f"Train CM – {name}");  plt.show()
+
+    # 3) Kennzahlen Test
+    acc_te = accuracy_score(y_te_true, y_te_pred)
+    f1_te  = f1_score(y_te_true, y_te_pred, average='macro', zero_division=0)
+    prec_te= precision_score(y_te_true, y_te_pred, average='macro', zero_division=0)
+    rec_te = recall_score(y_te_true, y_te_pred, average='macro', zero_division=0)
+
+    print("\n— Test —")
+    print(f"Acc {acc_te:.4f} | Prec {prec_te:.4f} | Rec {rec_te:.4f} | F1 {f1_te:.4f}")
+
+    sns.heatmap(confusion_matrix(y_te_true, y_te_pred, labels=lbls),
+                annot=True, cmap='Greens', fmt='d',
+                xticklabels=lbls, yticklabels=lbls)
+    plt.title(f"Test CM – {name}");  plt.show()
+
+    # 4) Overfitting-Heuristik
+    d_acc = acc_tr - acc_te
+    d_f1  = f1_tr  - f1_te
+
+    if (d_acc > OVERFIT_THRESH_ACC) or (d_f1 > OVERFIT_THRESH_F1):
+        print(f"⚠️  Verdacht auf Overfitting   (ΔAcc={d_acc:.3f}, ΔF1={d_f1:.3f})")
+    else:
+        print("✅  Generalisierung in Ordnung")
+
+    # 5) ROC (falls möglich)
+    if hasattr(best_model, "predict_proba"):
+        try:
+            y_score = best_model.predict_proba(X_test)
+            mdl_lbls = list(best_model.classes_)
+            common   = [l for l in lbls if l in mdl_lbls]
+            if common:
+                idx = [mdl_lbls.index(l) for l in common]
+                y_bin = label_binarize(y_te_true, classes=common)
+                for i, l in enumerate(common):
+                    if y_bin[:, i].sum() == 0:
+                        continue
+                    fpr, tpr, _ = roc_curve(y_bin[:, i], y_score[:, idx[i]])
+                    plt.plot(fpr, tpr, label=f"{l}")
+                plt.plot([0,1], [0,1], "k--")
+                plt.title(f"ROC – {name}")
+                plt.xlabel("FPR"); plt.ylabel("TPR")
+                plt.legend(); plt.grid(); plt.show()
+        except Exception as e:
+            print("ROC skipped:", e)
+
+    # 6) Logging
+    store_model_metrics(name,
+                        acc_tr, prec_tr, rec_tr, f1_tr,
+                        acc_te, prec_te, rec_te, f1_te)
+
+    # 7) Lernkurve plotten
+    plot_learning_curve(best_model, X_train, y_train, scoring="f1_macro", name=name)
