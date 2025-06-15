@@ -16,7 +16,7 @@ kernel_sizes = [3, 5, 7]
 all_combinations = list(itertools.product(models, batch_sizes, learning_rates, cnn_channels_list, kernel_sizes))
 
 for model_type, bs, lr, ch, ks in tqdm(all_combinations, desc="Grid Search Progress"):
-    run_name = f"{model_type.lower()}-bs-{bs}-{lr}-cnn_c-{ch}-k-{ks}_norm"
+    run_name = f"{model_type.lower()}-bs-{bs}-cnn_c-{ch}-k-{ks}"
     config = {
         "run_name": run_name,
         "log_dir": "./logs",
@@ -25,7 +25,7 @@ for model_type, bs, lr, ch, ks in tqdm(all_combinations, desc="Grid Search Progr
         "lr": lr,
         "cnn_channels": ch,
         "kernel_size": ks,
-        "early_stopping_patience": 5,
+        "early_stopping_patience": 10,
         "early_stopping_min_delta": 0.001,
         "model_type": model_type
     }
