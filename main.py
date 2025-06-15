@@ -25,6 +25,7 @@ def run_preprocessing_pipeline(
     apply_augment: bool = False,
     noise_level: float = 0.2,
     orientation_aug_methods: list = None,
+    val_set: bool = False
 ):
     zip_dir = Path(zip_dir)
     output_dir = Path(output_dir)
@@ -67,7 +68,10 @@ def run_preprocessing_pipeline(
         and zipfile.is_zipfile(str(f))
     ]
 
-    train_zips, test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED)
+    if val_set:
+        train_zips, val_zips,  test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED, create_val=val_set)
+    else:
+        train_zips, test_zips = create_stratified_split(zip_files, test_size=TEST_SIZE, seed=SEED)
 
     def process_and_extract(zip_files, augment=False, orientation_method=None):
         all_segments = []
@@ -115,6 +119,8 @@ def run_preprocessing_pipeline(
         export(seg_train, "train")
         seg_test = process_and_extract(test_zips)
         export(seg_test, "test")
+        seg_val = process_and_extract(val_zips)
+        export(seg_val, "val")
 
         # 2. Mit Rauschaugmentation
         seg_train_aug = process_and_extract(train_zips, augment=True)
@@ -163,5 +169,6 @@ if __name__ == "__main__":
         target_hz=50,
         apply_augment=True,
         noise_level=2.0,
-        orientation_aug_methods=["flip_roll", "invert_pitch", "rotate_yaw_180"]
+        orientation_aug_methods=["flip_roll", "invert_pitch", "rotate_yaw_180"],
+        val_set=True
     )
