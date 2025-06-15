@@ -1,31 +1,27 @@
 import itertools
 import subprocess
 import os
-
-# Add tqdm for progress bar
-try:
-    from tqdm import tqdm
-except ImportError:
-    tqdm = lambda x, **kwargs: x  # fallback: no progress bar
+from tqdm import tqdm
 
 # Define grid search options
 batch_sizes = [16, 32]
 learning_rates = [1e-3, 1e-4]
 hidden_sizes = [64, 128]
-num_layers = [1, 2, 3]
+num_layers = [1, 2]
 dropouts = [0.2, 0.5]
 bidirectional_options = [True, False]
+model_types = ["basic", "advanced"]
 
 # Prepare all combinations in advance for progress bar
 all_combinations = list(itertools.product(
-    batch_sizes, learning_rates, hidden_sizes, num_layers, dropouts, bidirectional_options
+    model_types, batch_sizes, learning_rates, hidden_sizes, num_layers, dropouts, bidirectional_options
 ))
 
-for bs, lr, hs, nl, do, bi in tqdm(all_combinations, desc="Grid Search LSTM", unit="run"):
-    run_name = f"lstm-bs{bs}-lr{lr}-hs{hs}-nl{nl}-do{do}-bi{bi}"
+for mt, bs, lr, hs, nl, do, bi in tqdm(all_combinations, desc="Grid Search LSTM", unit="run"):
+    run_name = f"{mt}-bs{bs}-lr{lr}-hs{hs}-nl{nl}-do{do}-bi{bi}"
     config = {
         # Model Architecture
-        "model_type": "advanced",
+        "model_type": mt,
         "lstm_hidden_size": hs,
         "lstm_num_layers": nl,
         "bidirectional": bi,
