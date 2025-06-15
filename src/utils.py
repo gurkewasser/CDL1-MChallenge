@@ -227,3 +227,52 @@ def plot_learning_curve(estimator, X, y, cv, scoring, title):
     plt.legend(loc="best")
     plt.show()
 
+
+def plot_model_metrics(models_to_plot, all_data, max_models=None, figsize_per_model=(14, 4), show_grid=True):
+    """
+    Plottet Training/Validation Loss und Validation Accuracy für eine Liste von Modell-Runs.
+    
+    Args:
+        models_to_plot (pd.DataFrame): DataFrame mit mindestens der Spalte 'run_name'.
+        all_data (dict): Dict mit run_name als Key und Werten als Dicts mit 'epoch', 'train_loss', 'val_loss', 'val_acc'.
+        max_models (int, optional): Max. Anzahl an Modellen, die geplottet werden sollen. None = alle.
+        figsize_per_model (tuple, optional): Breite und Höhe pro Modell-Zeile (default: (14, 4)).
+        show_grid (bool): Wenn True, wird Grid auf Plots angezeigt.
+    """
+    top_n = len(models_to_plot) if max_models is None else min(max_models, len(models_to_plot))
+    
+    fig, axes = plt.subplots(top_n, 2, figsize=(figsize_per_model[0], figsize_per_model[1] * top_n))
+    
+    # Sicherstellen, dass axes 2D ist
+    if top_n == 1:
+        axes = axes.reshape(1, 2)
+    
+    for i, (_, row) in enumerate(models_to_plot.head(top_n).iterrows()):
+        run_name = row["run_name"]
+        data = all_data[run_name]
+        epochs = data["epoch"]
+        
+        # Plot Loss
+        ax_loss = axes[i, 0]
+        ax_loss.plot(epochs, data["train_loss"], label="Train Loss")
+        ax_loss.plot(epochs, data["val_loss"], label="Val Loss")
+        ax_loss.set_title(f"{run_name} - Loss")
+        ax_loss.set_xlabel("Epoch")
+        ax_loss.set_ylabel("Loss")
+        ax_loss.legend()
+        if show_grid:
+            ax_loss.grid(True)
+        
+        # Plot Accuracy
+        ax_acc = axes[i, 1]
+        ax_acc.plot(epochs, data["val_acc"], label="Val Accuracy")
+        ax_acc.set_title(f"{run_name} - Validation Accuracy")
+        ax_acc.set_xlabel("Epoch")
+        ax_acc.set_ylabel("Accuracy")
+        ax_acc.legend()
+        if show_grid:
+            ax_acc.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+
