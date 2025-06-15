@@ -25,28 +25,38 @@ sys.path.append(str(project_root.parent))
 
 from methods import compute_normalization_params, apply_normalization
 
-
-train_dir = Path("testing/data/processed/DL")
+train_dir = Path("data/processed/DL")
 train_files = sorted(train_dir.glob("dl_train*.npz"))
 train_arrays = [np.load(f, allow_pickle=True) for f in train_files]
 X = np.concatenate([arr["X"] for arr in train_arrays], axis=0)
 y = np.concatenate([arr["y"] for arr in train_arrays], axis=0)
 
-data_test = np.load("testing/data/processed/DL/dl_test.npz")
+# Load validation set from dl_val.npz
+data_val = np.load("data/processed/DL/dl_val.npz")
+X_val = data_val["X"]
+y_val = data_val["y"]
+
+data_test = np.load("data/processed/DL/dl_test.npz")
 
 # Encode labels if necessary
 if y.dtype.kind in {'U', 'S', 'O'} or not np.issubdtype(y.dtype, np.integer):
     le = LabelEncoder()
     y = le.fit_transform(y)
+    y_val = le.transform(y_val)
 else:
     le = None
+    y_val = y_val.astype(np.int64)
 
 # Ensure shape (N, C, T)
 if X.shape[1] < X.shape[2]:
     X = np.transpose(X, (0, 2, 1))
+if X_val.shape[1] < X_val.shape[2]:
+    X_val = np.transpose(X_val, (0, 2, 1))
 
 X = X.astype(np.float32)
 y = y.astype(np.int64)
+X_val = X_val.astype(np.float32)
+y_val = y_val.astype(np.int64)
 
 # Apply normalization based on training data
 stats = compute_normalization_params(pd.DataFrame(X.reshape(X.shape[0], -1)))
@@ -54,20 +64,23 @@ X_flat = X.reshape(X.shape[0], -1)
 X_norm = apply_normalization(pd.DataFrame(X_flat), stats).values.reshape(X.shape)
 X = X_norm
 
+X_val_flat = X_val.reshape(X_val.shape[0], -1)
+X_val_norm = apply_normalization(pd.DataFrame(X_val_flat), stats).values.reshape(X_val.shape)
+X_val = X_val_norm
+
 num_classes = len(np.unique(y))
 
 # Dataset setup
 X_tensor = torch.from_numpy(X)
 y_tensor = torch.from_numpy(y)
 train_set = TensorDataset(X_tensor, y_tensor)
-# Split train set into train and val (e.g., 90/10)
-val_fraction = 0.1
-val_size = int(len(train_set) * val_fraction)
-train_size = len(train_set) - val_size
-train_subset, val_subset = torch.utils.data.random_split(train_set, [train_size, val_size])
 
-train_loader = DataLoader(train_subset, batch_size=config["batch_size"], shuffle=True)
-val_loader = DataLoader(val_subset, batch_size=config["batch_size"], shuffle=False)
+X_val_tensor = torch.from_numpy(X_val)
+y_val_tensor = torch.from_numpy(y_val)
+val_set = TensorDataset(X_val_tensor, y_val_tensor)
+
+train_loader = DataLoader(train_set, batch_size=config["batch_size"], shuffle=True)
+val_loader = DataLoader(val_set, batch_size=config["batch_size"], shuffle=False)
 
 # Prepare test_loader
 X_test = data_test["X"]
@@ -312,6 +325,8 @@ def save_history(history, config, test_metrics):
         "test_precision": test_metrics[1],
         "test_recall": test_metrics[2],
         "test_f1": test_metrics[3],
+        "val_loss": history["val_loss"][-1] if history["val_loss"] else None,
+        "val_acc": history["val_acc"][-1] if history["val_acc"] else None
     }
     with open(history_path, "w") as f:
         json.dump(history, f, indent=4)
@@ -327,7 +342,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # wandb: initialize run
 wandb.init(
-    project=config.get("wandb_project", "cnn_gridsearch"),
+    project=config.get("wandb_project", "cnn_gridsearch_cdl1"),
     name=config.get("run_name", None),
     config=config,
     dir=config.get("log_dir", "./logs"),
@@ -360,7 +375,11 @@ if len(test_loader.dataset) > 0:
         "test_precision": prec,
         "test_recall": rec,
         "test_f1": f1,
-        "epoch": history["epoch"][-1] if history["epoch"] else config["epochs"]
+        "epoch": history["epoch"][-1] if history["epoch"] else config["epochs"],
+        "val_loss": history["val_loss"][-1] if history["val_loss"] else None,
+        "val_acc": history["val_acc"][-1] if history["val_acc"] else None,
+        "device": str(device),
+        "model_type": config["model_type"],
     })
     save_history(history, config, test_metrics=(acc, prec, rec, f1))
 else:
