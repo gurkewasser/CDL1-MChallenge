@@ -1,6 +1,6 @@
 batch_size: 64
 checkpoint_dir: checkpoints/mlp
-dropout: 0.4
+dropout: 0.3
 early_stopping: true
 epochs: 100
 log_dir: logs/mlp
@@ -18,7 +18,7 @@ model_type: advanced
 patience: 15
 project: CDL1-MLP
 restore_best_weights: true
-run_name: mlp-bs64-lr0.0001-hs1024-do0.4-advanced
+run_name: mlp-bs64-lr0.0001-hs1024-do0.3-advanced
 save_best_only: true
 save_frequency: 5
 train_val_split: 0.8
