@@ -1,5 +1,6 @@
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import matplotlib.pyplot as plt
+import json
 
 def compute_metrics(y_true, y_pred, average='macro'):
     """
@@ -405,3 +406,24 @@ def evaluate_model(name, best_model, X_train, y_train, X_test, y_test):
 
     # 7) Lernkurve plotten
     plot_learning_curve(best_model, X_train, y_train, scoring="f1_macro", name=name)
+
+def print_top2_f1_from_dir(log_dir, dir_name):
+    json_files = list(log_dir.glob("*.json"))
+    results = []
+    for file in json_files:
+        with open(file, "r") as f:
+            data = json.load(f)
+            test_f1 = data.get("test_metrics", {}).get("test_f1", None)
+            results.append({
+                "run_name": file.stem,
+                "test_f1": test_f1
+            })
+    df = pd.DataFrame(results)
+    df = df.dropna(subset=["test_f1"])
+    top3 = df.sort_values(by="test_f1", ascending=False).head(2)
+    print(f"Top 3 F1 scores in {dir_name}:")
+    if not top3.empty:
+        print(top3[["run_name", "test_f1"]].to_string(index=False))
+    else:
+        print("No valid runs found.")
+    print("-" * 40)
