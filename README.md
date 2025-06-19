@@ -39,11 +39,11 @@ CDL1-MChallenge
 
 Die Trainingsdaten können unter folgendem Link heruntergeladen werden:
 
-[Download via SWITCH Filesender](https://filesender.switch.ch/filesender2/?s=download&token=8ae33f29-bf81-4ccf-988a-d7f7b8bc010c)
+[Download via SWITCH Filesender](https://filesender.switch.ch/filesender2/?s=download&token=b371fe3a-597e-4b03-a7da-808be2a050f4)
 
 ## Einstiegspunkt
 
-Die Datei `main.py` ist die Pipeline die alle Daten vorbereitet und bereicht macht für das trainieren der Klassischen und Deep Learning Modelle.
+Die Datei `main.py` ist die Pipeline, die alle Daten vorbereitet und aufbereitet, um sie für das Training der klassischen und Deep-Learning-Modelle nutzbar zu machen. Um das Skript auszuführen, muss man einen Ordner `data` und darin einen Unterordner `raw` erstellen und die heruntergeladene **data.zip-Datei** darin speichern. Das Skript bereitet die Daten nach der Ausführung automatisch vor.
 
 - `Overview_Challenge.ipynb`: Überblick über die Challenge und die verwendeten Daten und Vorbereitung der Daten
 - `non_deep_learning_models.ipynb`: Klassische Modelle
